@@ -1,112 +1,201 @@
 // src/components/CategoryEditForm.jsx
-// This component provides a form to edit an existing category in IndexedDB.
-// It pre-fills fields with the current values and updates the record on submission.
 
 import React, { useState } from 'react';
 import { db } from '../db';
 
 /**
- * CategoryEditForm allows editing of an existing category.
- * @param {{ category: Object, onCancel: Function, onSuccess: Function }} props
- *   - category: the existing category object { id, name, description, showSingle }
- *   - onCancel: callback invoked when user cancels editing
- *   - onSuccess: callback invoked after successful update to reload list
+ * CategoryEditForm
+ *
+ * A form for editing an existing category.
+ * Includes Save, Cancel, and Delete buttons.
+ *
+ * Deleting will also remove all requestors (and their prayers)
+ * within this category. If any requestors exist, a warning
+ * dialog will show the count before deletion.
+ *
+ * Props:
+ * - category: {
+ *     id,
+ *     name,
+ *     description,
+ *     showSingle
+ *   }
+ * - onCancel: () => void        // Called when the user clicks “Cancel”
+ * - onSuccess: () => void       // Called after successful save or delete
  */
-function CategoryEditForm({ category, onCancel, onSuccess }) {
-  // Initialize form state with existing category values
+export default function CategoryEditForm({ category, onCancel, onSuccess }) {
+  // Initialize form state from the passed-in category object
   const [name, setName] = useState(category.name);
-  const [description, setDescription] = useState(category.description);
+  const [description, setDescription] = useState(category.description || '');
   const [showSingle, setShowSingle] = useState(Boolean(category.showSingle));
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e) => {
+  /**
+   * handleSave
+   *
+   * Updates this category in IndexedDB, then calls onSuccess()
+   * so the parent list can reload and exit edit mode.
+   */
+  const handleSave = async (e) => {
     e.preventDefault();
     setError(null);
-    setSubmitting(true);
 
+    // Basic validation
     if (!name.trim()) {
-      setError('Category name is required.');
-      setSubmitting(false);
+      setError('Category name cannot be empty.');
       return;
     }
 
+    setSubmitting(true);
     try {
-      // Update category in IndexedDB
-      await db.categories.update(category.id, {
+      await db.categories.put({
+        id: category.id,
         name: name.trim(),
         description: description.trim(),
         showSingle: showSingle ? 1 : 0,
       });
-      // Notify parent to reload categories
-      if (onSuccess) onSuccess();
+
+      // Notify parent to reload and close edit mode
+      onSuccess();
     } catch (err) {
-      console.error('Failed to update category:', err);
-      setError('An unexpected error occurred.');
+      console.error('Error saving category:', err);
+      setError('Failed to save changes. Check console for details.');
+    }
+    setSubmitting(false);
+  };
+
+  /**
+   * handleDelete
+   *
+   * 1. Counts requestors in this category.
+   * 2. Warns the user if any exist (showing the count).
+   * 3. Deletes all prayers for those requestors.
+   * 4. Deletes the requestors.
+   * 5. Deletes the category itself.
+   * 6. Calls onSuccess().
+   */
+  const handleDelete = async () => {
+    // Count how many requestors remain
+    const count = await db.requestors
+      .where('categoryId')
+      .equals(category.id)
+      .count();
+
+    // Build a warning message
+    let message = `Are you sure you want to delete the category "${category.name}"?`;
+    if (count > 0) {
+      message += `\n\nThis will also delete ${count} requestor${count > 1 ? 's' : ''} and all their prayers.`;
     }
 
+    // Confirm with the user
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (count > 0) {
+        // Delete prayers for each requestor in this category
+        const reqs = await db.requestors
+          .where('categoryId')
+          .equals(category.id)
+          .toArray();
+        const reqIds = reqs.map((r) => r.id);
+
+        // Bulk delete prayers whose requestorId is in reqIds
+        await db.prayers
+          .where('requestorId')
+          .anyOf(reqIds)
+          .delete();
+
+        // Delete the requestors themselves
+        await db.requestors
+          .where('categoryId')
+          .equals(category.id)
+          .delete();
+      }
+
+      // Finally delete the category
+      await db.categories.delete(category.id);
+
+      // Notify parent to reload and close edit mode
+      onSuccess();
+    } catch (err) {
+      console.error('Error deleting category:', err);
+      setError('Failed to delete category. Check console for details.');
+    }
     setSubmitting(false);
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 bg-gray-600 rounded-lg mb-2">
-      <h4 className="text-white font-semibold mb-3">Edit Category</h4>
+    <form onSubmit={handleSave} className="space-y-4 p-4 bg-gray-800 rounded-lg mb-2">
+      <h4 className="text-white font-semibold">Edit Category</h4>
 
-      {/* Category Name */}
-      <div className="mb-2">
+      {/* Name */}
+      <div>
+        <label className="block text-gray-300">Name</label>
         <input
           type="text"
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
       {/* Description */}
-      <div className="mb-2">
+      <div>
+        <label className="block text-gray-300">Description</label>
         <textarea
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
-      {/* Show in Single View Toggle */}
-      <div className="flex items-center mb-2">
+      {/* Show in Single View toggle */}
+      <label className="inline-flex items-center text-gray-300">
         <input
-          id={`edit-cat-single-${category.id}`}
           type="checkbox"
+          className="form-checkbox h-5 w-5 text-yellow-400"
           checked={showSingle}
           onChange={(e) => setShowSingle(e.target.checked)}
-          className="mr-2"
         />
-        <label htmlFor={`edit-cat-single-${category.id}`} className="text-gray-200 text-sm">
-          Include in Single View
-        </label>
-      </div>
+        <span className="ml-2">Include in Single View</span>
+      </label>
 
-      {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+      {/* Error message */}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {/* Save/Cancel buttons */}
+      {/* Action Buttons */}
       <div className="flex space-x-2">
+        {/* Save */}
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+          className="px-4 py-2 bg-yellow-500 text-black rounded hover:bg-yellow-600 disabled:opacity-50 font-semibold"
         >
           {submitting ? 'Saving...' : 'Save'}
         </button>
+
+        {/* Cancel */}
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+          className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
         >
           Cancel
+        </button>
+
+        {/* Delete */}
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+        >
+          Delete
         </button>
       </div>
     </form>
   );
 }
-
-export default CategoryEditForm;

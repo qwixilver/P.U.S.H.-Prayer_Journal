@@ -1,145 +1,183 @@
 // src/components/PrayerEditForm.jsx
-// This component provides a form to edit an existing prayer request in IndexedDB.
-// It pre-fills fields with the current values and updates the record on submission.
 
 import React, { useState } from 'react';
 import { db } from '../db';
 
 /**
- * PrayerEditForm allows editing of an existing prayer.
- * @param {{ prayer: Object, onCancel: Function, onSuccess: Function }} props
- *  - prayer: the existing prayer object { id, name, description, requestedAt, answeredAt, status, security }
- *  - onCancel: callback when user cancels editing
- *  - onSuccess: callback after successful update (e.g., to reload list)
+ * PrayerEditForm allows editing and deleting of an existing prayer request.
+ *
+ * Props:
+ * - prayer: {
+ *     id,
+ *     requestorId,
+ *     name,
+ *     description,
+ *     requestedAt,
+ *     answeredAt,
+ *     status,
+ *     security
+ *   }
+ * - onCancel: () => void         // Called when the user clicks “Cancel”
+ * - onSuccess: () => void        // Called after a successful save or delete
  */
-function PrayerEditForm({ prayer, onCancel, onSuccess }) {
-  // Pre-fill form state with existing prayer values
+export default function PrayerEditForm({ prayer, onCancel, onSuccess }) {
+  // Form state initialized from the passed-in prayer object
   const [name, setName] = useState(prayer.name);
-  const [description, setDescription] = useState(prayer.description);
-  const [requestedAt, setRequestedAt] = useState(prayer.requestedAt.substr(0,10));
-  const [answeredAt, setAnsweredAt] = useState(prayer.answeredAt ? prayer.answeredAt.substr(0,10) : '');
+  const [description, setDescription] = useState(prayer.description || '');
+  // Format to "YYYY-MM-DD" for the date input
+  const [requestedAt, setRequestedAt] = useState(prayer.requestedAt.slice(0, 10));
   const [status, setStatus] = useState(prayer.status);
   const [security, setSecurity] = useState(Boolean(prayer.security));
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e) => {
+  /**
+   * handleSave
+   * Updates this prayer in IndexedDB, then calls onSuccess().
+   */
+  const handleSave = async (e) => {
     e.preventDefault();
     setError(null);
-    setSubmitting(true);
 
+    // Simple validation
     if (!name.trim()) {
-      setError('Prayer title is required.');
-      setSubmitting(false);
+      setError('Prayer title cannot be empty.');
       return;
     }
 
+    setSubmitting(true);
     try {
-      // Update prayer record in IndexedDB
-      await db.prayers.update(prayer.id, {
+      // Update the record (keeping the original id and requestorId)
+      await db.prayers.put({
+        id: prayer.id,
+        requestorId: prayer.requestorId,
         name: name.trim(),
         description: description.trim(),
-        requestedAt: requestedAt,
-        answeredAt: status === 'answered' ? answeredAt : null,
-        status: status,
+        requestedAt: new Date(requestedAt).toISOString(),
+        answeredAt: prayer.answeredAt, // keep original answeredAt
+        status,
         security: security ? 1 : 0,
       });
-      if (onSuccess) onSuccess();
-    } catch (err) {
-      console.error('Failed to update prayer:', err);
-      setError('An unexpected error occurred.');
-    }
 
+      // Refresh parent list and exit edit mode
+      onSuccess();
+    } catch (err) {
+      console.error('Error saving prayer:', err);
+      setError('Failed to save changes. See console for details.');
+    }
     setSubmitting(false);
   };
 
+  /**
+   * handleDelete
+   * Confirms with the user, deletes this prayer from IndexedDB,
+   * then calls onSuccess().
+   */
+  const handleDelete = async () => {
+    if (!window.confirm('Are you sure you want to delete this prayer?')) {
+      return;
+    }
+    try {
+      await db.prayers.delete(prayer.id);
+      onSuccess();
+    } catch (err) {
+      console.error('Error deleting prayer:', err);
+      setError('Failed to delete prayer. See console for details.');
+    }
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="p-4 bg-gray-600 rounded-lg mb-2">
-      <h4 className="text-white font-semibold mb-3">Edit Prayer</h4>
+    <form onSubmit={handleSave} className="space-y-4 p-4 bg-gray-800 rounded-lg mb-2">
+      <h4 className="text-white font-semibold">Edit Prayer</h4>
 
       {/* Title */}
-      <div className="mb-2">
+      <div>
+        <label className="block text-gray-300">Prayer Title</label>
         <input
           type="text"
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
       {/* Description */}
-      <div className="mb-2">
+      <div>
+        <label className="block text-gray-300">Description</label>
         <textarea
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
-      {/* Requested Date */}
-      <div className="mb-2">
-        <label className="text-gray-300 text-sm">Requested:</label>
-        <input
-          type="date"
-          value={requestedAt}
-          onChange={(e) => setRequestedAt(e.target.value)}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-
-      {/* Status & Answered Date */}
-      <div className="mb-2">
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="requested">Requested</option>
-          <option value="answered">Answered</option>
-        </select>
-        {status === 'answered' && (
+      {/* Requested Date & Status */}
+      <div className="flex space-x-4">
+        <div>
+          <label className="block text-gray-300">Requested Date</label>
           <input
             type="date"
-            value={answeredAt}
-            onChange={(e) => setAnsweredAt(e.target.value)}
-            className="mt-2 w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 p-2 bg-gray-700 rounded text-white"
+            value={requestedAt}
+            onChange={(e) => setRequestedAt(e.target.value)}
           />
-        )}
+        </div>
+        <div>
+          <label className="block text-gray-300">Status</label>
+          <select
+            className="mt-1 p-2 bg-gray-700 rounded text-white"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            <option value="requested">Requested</option>
+            <option value="answered">Answered</option>
+          </select>
+        </div>
       </div>
 
-      {/* Security Toggle */}
-      <div className="flex items-center mb-2">
+      {/* Security Flag */}
+      <label className="inline-flex items-center text-gray-300">
         <input
           type="checkbox"
+          className="form-checkbox h-5 w-5 text-yellow-400"
           checked={security}
           onChange={(e) => setSecurity(e.target.checked)}
-          className="mr-2"
         />
-        <label className="text-gray-200 text-sm">Security Only</label>
-      </div>
+        <span className="ml-2">Security View Only</span>
+      </label>
 
-      {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+      {/* Error Message */}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {/* Save/Cancel buttons */}
+      {/* Action Buttons */}
       <div className="flex space-x-2">
+        {/* Save */}
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+          className="px-4 py-2 bg-yellow-500 text-black rounded hover:bg-yellow-600 disabled:opacity-50 font-semibold"
         >
           {submitting ? 'Saving...' : 'Save'}
         </button>
+
+        {/* Cancel */}
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+          className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
         >
           Cancel
+        </button>
+
+        {/* Delete */}
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+        >
+          Delete
         </button>
       </div>
     </form>
   );
 }
-
-export default PrayerEditForm;

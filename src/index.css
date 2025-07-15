@@ -1,20 +1,37 @@
 /* src/index.css */
-/* This is the entrypoint for our global CSS, processed by Tailwind and PostCSS */
 
-/*
-  1. `@tailwind base;` injects Tailwind's base styles (e.g., normalize.css, default typography resets)
-  2. `@tailwind components;` injects any component classes (from Tailwind core or plugins)
-  3. `@tailwind utilities;` injects all utility classes (e.g., p-4, text-center, bg-gray-900)
-*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   1) Import Tailwind's layers
+      - base: resets & core styles
+      - components: any Tailwind component classes
+      - utilities: all the utility classes (e.g. bg-gray-800)
+   ────────────────────────────────────────────────────────────────────────────── */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/*
-  Below this line, you can add your own global CSS overrides or custom utility classes.
-  For example, to define a special text shadow utility:
-
-  .text-glow {
-    text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+/* ──────────────────────────────────────────────────────────────────────────────
+   2) Custom global styles
+   We use @layer base to inject these rules before Tailwind's utilities,
+   so they cascade naturally.
+   ────────────────────────────────────────────────────────────────────────────── */
+@layer base {
+  /* Ensure html and body take the full viewport height */
+  html,
+  body {
+    height: 100%;
   }
-*/
+
+  /* Dark background & light text everywhere */
+  body {
+    /* Tailwind: bg-gray-900 is almost-black, text-white ensures readability */
+    @apply bg-gray-900 text-white;
+  }
+
+  /* Make the React mount point full-height too */
+  #root {
+    height: 100%;
+    /* In case App.jsx uses flex or h-screen, this makes sure the root 
+       container has room to fill */
+  }
+}

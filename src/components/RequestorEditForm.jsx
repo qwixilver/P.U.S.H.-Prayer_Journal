@@ -1,109 +1,161 @@
 // src/components/RequestorEditForm.jsx
-// This component provides a form to edit an existing requestor in IndexedDB.
-// It pre-fills fields with the current values and updates the record on submission.
 
 import React, { useState } from 'react';
 import { db } from '../db';
 
 /**
- * RequestorEditForm allows editing of an existing requestor.
- * @param {{ requestor: Object, onCancel: Function, onSuccess: Function }} props
- *   - requestor: the existing requestor object { id, name, description, security }
- *   - onCancel: callback to call when user cancels editing
- *   - onSuccess: callback to call after successful update (e.g., to reload parent list)
+ * RequestorEditForm
+ *
+ * A form for editing an existing requestor under a specific category.
+ * Includes Save, Cancel, and Delete buttons.
+ *
+ * Props:
+ * - requestor: {
+ *     id,
+ *     categoryId,
+ *     name,
+ *     description,
+ *     security
+ *   }
+ * - onCancel: () => void        // Called when the user clicks “Cancel”
+ * - onSuccess: () => void       // Called after a successful save or delete
  */
-function RequestorEditForm({ requestor, onCancel, onSuccess }) {
-  // Pre-fill state with existing values
+export default function RequestorEditForm({ requestor, onCancel, onSuccess }) {
+  // Initialize form state from the passed-in requestor object
   const [name, setName] = useState(requestor.name);
-  const [description, setDescription] = useState(requestor.description);
+  const [description, setDescription] = useState(requestor.description || '');
   const [security, setSecurity] = useState(Boolean(requestor.security));
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e) => {
+  /**
+   * handleSave
+   *
+   * Updates the requestor record in IndexedDB, then invokes onSuccess()
+   * so the parent can reload and exit edit mode.
+   */
+  const handleSave = async (e) => {
     e.preventDefault();
     setError(null);
-    setSubmitting(true);
 
+    // Basic validation: name must not be empty
     if (!name.trim()) {
-      setError('Requestor name is required.');
-      setSubmitting(false);
+      setError('Requestor name cannot be empty.');
       return;
     }
 
+    setSubmitting(true);
     try {
-      // Update the record in IndexedDB
-      await db.requestors.update(requestor.id, {
+      // Update requestor by primary key 'id'
+      await db.requestors.put({
+        id: requestor.id,
+        categoryId: requestor.categoryId, // preserve category
         name: name.trim(),
         description: description.trim(),
         security: security ? 1 : 0,
       });
 
-      // Notify parent to reload
-      if (onSuccess) onSuccess();
+      // Notify parent to reload requestors and close edit
+      onSuccess();
     } catch (err) {
-      console.error('Failed to update requestor:', err);
-      setError('An unexpected error occurred.');
+      console.error('Error saving requestor:', err);
+      setError('Failed to save changes. See console for details.');
     }
-
     setSubmitting(false);
   };
 
-  return (
-    <form onSubmit={handleSubmit} className="p-3 bg-gray-600 rounded-lg mb-4">
-      <h4 className="font-semibold mb-2 text-white">Edit Requestor</h4>
+  /**
+   * handleDelete
+   *
+   * Prompts the user, then deletes the requestor from IndexedDB,
+   * finally calling onSuccess() to reload the list.
+   */
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this requestor and all its prayers?')) {
+      return;
+    }
+    try {
+      // Delete requestor record
+      await db.requestors.delete(requestor.id);
+      // Also optionally delete prayers tied to this requestor:
+      await db.prayers.where('requestorId').equals(requestor.id).delete();
 
-      <div className="mb-2">
+      // Notify parent to reload and exit edit mode
+      onSuccess();
+    } catch (err) {
+      console.error('Error deleting requestor:', err);
+      setError('Failed to delete requestor. See console for details.');
+    }
+  };
+
+  return (
+    <form onSubmit={handleSave} className="space-y-4 p-4 bg-gray-800 rounded-lg mb-2">
+      <h4 className="text-white font-semibold">Edit Requestor</h4>
+
+      {/* Name input */}
+      <div>
+        <label className="block text-gray-300">Name</label>
         <input
           type="text"
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
-      <div className="mb-2">
+      {/* Description input */}
+      <div>
+        <label className="block text-gray-300">Description</label>
         <textarea
+          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          className="w-full p-2 bg-gray-500 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
-      <div className="flex items-center mb-2">
+      {/* Security toggle */}
+      <label className="inline-flex items-center text-gray-300">
         <input
-          id={`edit-req-sec-${requestor.id}`}
           type="checkbox"
+          className="form-checkbox h-5 w-5 text-yellow-400"
           checked={security}
           onChange={(e) => setSecurity(e.target.checked)}
-          className="mr-2"
         />
-        <label htmlFor={`edit-req-sec-${requestor.id}`} className="text-sm text-gray-200">
-          Security Only
-        </label>
-      </div>
+        <span className="ml-2">Security View Only</span>
+      </label>
 
-      {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+      {/* Error message */}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
 
+      {/* Action buttons */}
       <div className="flex space-x-2">
+        {/* Save */}
         <button
           type="submit"
           disabled={submitting}
-          className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+          className="px-4 py-2 bg-yellow-500 text-black rounded hover:bg-yellow-600 disabled:opacity-50 font-semibold"
         >
           {submitting ? 'Saving...' : 'Save'}
         </button>
+
+        {/* Cancel */}
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+          className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
         >
           Cancel
+        </button>
+
+        {/* Delete */}
+        <button
+          type="button"
+          onClick={handleDelete}
+          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+        >
+          Delete
         </button>
       </div>
     </form>
   );
 }
-
-export default RequestorEditForm;
