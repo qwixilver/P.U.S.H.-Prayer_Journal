@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prayer Journal</title>
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json" />
+  <!-- Theme Color -->
+  <meta name="theme-color" content="#1A202C" />
+</head>
+<body class="bg-gray-900 text-white">
+  <!-- React Mount Point -->
+  <div id="root"></div>
+
+  <!-- Main Entry Script -->
+  <script type="module" src="/src/index.jsx"></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(reg => console.log('Service Worker registered:', reg))
+          .catch(err => console.error('Service Worker registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
