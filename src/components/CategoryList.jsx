@@ -9,6 +9,8 @@ import CategoryForm from './CategoryForm';
 import CategoryEditForm from './CategoryEditForm';
 import RequestorForm from './RequestorForm';
 import RequestorEditForm from './RequestorEditForm';
+import BackupRestorePanel from './BackupRestorePanel';
+
 
 function CategoryList() {
   // State for categories and loading
@@ -153,6 +155,8 @@ function CategoryList() {
           ))}
         </ul>
       )}
+      {/* Backup & Restore section */}
+<BackupRestorePanel />
     </div>
   );
 }
