@@ -41,6 +41,14 @@ function PrayerList({ viewType }) {
     loadPrayers();
   }, [viewType]);
 
+  // Refresh the list whenever imports or other DB-wide changes finish
+useEffect(() => {
+  const onDbChanged = () => loadPrayers();
+  window.addEventListener('db:changed', onDbChanged);
+  return () => window.removeEventListener('db:changed', onDbChanged);
+}, []); // empty deps: mount once, cleanup on unmount
+
+
   // Enter edit mode
   const onEditClick = id => {
     setEditMode(prev => ({ ...prev, [id]: true }));

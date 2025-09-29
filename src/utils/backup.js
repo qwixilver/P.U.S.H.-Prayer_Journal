@@ -1,23 +1,10 @@
 // src/utils/backup.js
 // Import/Export helpers for the Prayer Journal IndexedDB (Dexie) database.
-// - Export to a single JSON file
-// - Import from our JSON backup
-// - Import from 3 CSV files (as exported by AppSheet: categories, requestors, prayers)
-//
-// Notes:
-// * "mode" can be 'replace' (wipe all data before import) or 'merge' (upsert by names).
-// * CSV import expects columns close to your AppSheet export, but matching is lenient:
-//   - Categories CSV:  name, description, showSingle
-//   - Requestors CSV:  category, name, description, security
-//   - Prayers CSV:     requestor, name, description, requestedAt, answeredAt, status, security
-//   Column names are matched case-insensitively and with whitespace trimmed.
 
 import { db } from '../db';
 import Papa from 'papaparse';
 
-// ---------- small helpers ----------
-
-const schemaVersion = 1; // bump if you change the export format
+const schemaVersion = 1;
 const nowIso = () => new Date().toISOString();
 
 function normalizeBool(v) {
@@ -34,21 +21,13 @@ function normalizeStatus(v) {
 
 function toIsoOrNull(v) {
   if (!v) return null;
-  try {
-    const d = new Date(v);
-    // Invalid dates become "Invalid Date"
-    return isNaN(d.getTime()) ? null : d.toISOString();
-  } catch {
-    return null;
-  }
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 function headerMap(row) {
-  // Build a case-insensitive key map for a CSV row
   const map = {};
-  for (const k of Object.keys(row)) {
-    map[k.trim().toLowerCase()] = k;
-  }
+  for (const k of Object.keys(row)) map[k.trim().toLowerCase()] = k;
   return (wanted) => map[wanted.trim().toLowerCase()];
 }
 
@@ -56,7 +35,7 @@ function parseCsvFile(file) {
   return new Promise((resolve, reject) => {
     Papa.parse(file, {
       header: true,
-      skipEmptyLines: true,
+      skipEmptyLines: true, // removes truly empty lines
       transformHeader: (h) => h.trim(),
       complete: (res) => resolve(res.data),
       error: reject,
@@ -73,7 +52,6 @@ async function getAll() {
   return { categories, requestors, prayers };
 }
 
-// Finders that DO NOT require indexed fields (we use .filter for robustness)
 async function findCategoryByName(name) {
   const n = String(name || '').trim();
   if (!n) return null;
@@ -92,7 +70,7 @@ async function findRequestorByNameAndCategory(reqName, categoryId) {
 
 export async function exportAllAsJson() {
   const { categories, requestors, prayers } = await getAll();
-  const payload = {
+  return {
     meta: {
       type: 'prayer-journal-backup',
       version: schemaVersion,
@@ -100,13 +78,10 @@ export async function exportAllAsJson() {
     },
     data: { categories, requestors, prayers },
   };
-  return payload;
 }
 
 export function downloadJson(data, filename = 'prayer-journal-backup.json') {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json',
-  });
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -118,21 +93,27 @@ export function downloadJson(data, filename = 'prayer-journal-backup.json') {
 // ---------- IMPORT (JSON) ----------
 
 export async function importFromJsonBackup(json, mode = 'merge') {
-  // Basic validation
   if (!json || !json.meta || json.meta.type !== 'prayer-journal-backup') {
     throw new Error('Invalid backup file.');
   }
   const { categories = [], requestors = [], prayers = [] } = json.data || {};
+
+  // NEW: skip blank-ish rows up front
+  const cleanCats = categories.filter((c) => String(c?.name || '').trim() !== '');
+  const cleanReqs = requestors.filter((r) => String(r?.name || '').trim() !== '');
+  const cleanPrs = prayers.filter((p) => String(p?.name || '').trim() !== '');
+
+  let addedCats = 0, updatedCats = 0, addedReqs = 0, updatedReqs = 0, addedPrs = 0, updatedPrs = 0;
 
   await db.transaction('rw', db.categories, db.requestors, db.prayers, async () => {
     if (mode === 'replace') {
       await Promise.all([db.prayers.clear(), db.requestors.clear(), db.categories.clear()]);
     }
 
-    // Simple upsert by name (and category) to keep "merge" deterministic
-    // 1) Categories
     const catIdMap = new Map(); // name -> id
-    for (const c of categories) {
+
+    // Categories
+    for (const c of cleanCats) {
       const existing = await findCategoryByName(c.name);
       if (existing && mode === 'merge') {
         await db.categories.update(existing.id, {
@@ -140,6 +121,7 @@ export async function importFromJsonBackup(json, mode = 'merge') {
           showSingle: normalizeBool(c.showSingle) ? 1 : 0,
         });
         catIdMap.set(c.name, existing.id);
+        updatedCats++;
       } else {
         const id = await db.categories.add({
           name: c.name,
@@ -147,22 +129,22 @@ export async function importFromJsonBackup(json, mode = 'merge') {
           showSingle: normalizeBool(c.showSingle) ? 1 : 0,
         });
         catIdMap.set(c.name, id);
+        addedCats++;
       }
     }
 
-    // 2) Requestors
-    const reqIdMap = new Map(); // (categoryName + '::' + reqName) -> id
-    for (const r of requestors) {
-      // Figure category id either from r.categoryId or by name lookup
-      let categoryId = r.categoryId;
-      if (!categoryId && r.categoryName) {
-        categoryId = catIdMap.get(r.categoryName) || (await findCategoryByName(r.categoryName))?.id;
-      }
-      // If still not found, skip (or create a default category?)
+    // Requestors
+    const reqIdMap = new Map(); // `${categoryName}::${reqName}` -> id
+    for (const r of cleanReqs) {
+      const categoryName = String(r.categoryName || r.category || '').trim();
+      const reqName = String(r.name || '').trim();
+      if (!categoryName || !reqName) continue; // skip incomplete rows
+
+      let categoryId = r.categoryId || catIdMap.get(categoryName) || (await findCategoryByName(categoryName))?.id;
       if (!categoryId) continue;
 
-      const key = `${String(r.categoryName || '').trim()}::${String(r.name || '').trim()}`;
-      const existing = await findRequestorByNameAndCategory(r.name, categoryId);
+      const key = `${categoryName}::${reqName}`;
+      const existing = await findRequestorByNameAndCategory(reqName, categoryId);
 
       if (existing && mode === 'merge') {
         await db.requestors.update(existing.id, {
@@ -170,40 +152,46 @@ export async function importFromJsonBackup(json, mode = 'merge') {
           security: normalizeBool(r.security) ? 1 : 0,
         });
         reqIdMap.set(key, existing.id);
+        updatedReqs++;
       } else {
         const id = await db.requestors.add({
           categoryId,
-          name: r.name,
+          name: reqName,
           description: r.description || '',
           security: normalizeBool(r.security) ? 1 : 0,
         });
         reqIdMap.set(key, id);
+        addedReqs++;
       }
     }
 
-    // 3) Prayers
-    for (const p of prayers) {
-      // Resolve requestorId by name if missing (requires requestorName + categoryName in data)
+    // Prayers
+    for (const p of cleanPrs) {
+      const prayerName = String(p.name || '').trim();
+      if (!prayerName) continue;
+
       let requestorId = p.requestorId;
-
-      if (!requestorId && (p.requestorName || p.categoryName)) {
-        const key = `${String(p.categoryName || '').trim()}::${String(p.requestorName || '').trim()}`;
-        requestorId =
-          reqIdMap.get(key) ||
-          (await (async () => {
-            const cat = await findCategoryByName(p.categoryName);
-            if (!cat) return null;
-            const r = await findRequestorByNameAndCategory(p.requestorName, cat.id);
-            return r?.id || null;
-          })());
+      if (!requestorId) {
+        const categoryName = String(p.categoryName || p.category || '').trim();
+        const requestorName = String(p.requestorName || p.requestor || '').trim();
+        if (categoryName && requestorName) {
+          const key = `${categoryName}::${requestorName}`;
+          requestorId =
+            reqIdMap.get(key) ||
+            (await (async () => {
+              const cat = await findCategoryByName(categoryName);
+              if (!cat) return null;
+              const r = await findRequestorByNameAndCategory(requestorName, cat.id);
+              return r?.id || null;
+            })());
+        }
       }
-
-      if (!requestorId) continue; // cannot import if we can’t resolve requestor
+      if (!requestorId) continue; // can't import without a requestor
 
       const record = {
         requestorId,
-        name: p.name,
-        description: p.description || '',
+        name: prayerName,
+        description: String(p.description || '').trim(),
         requestedAt: toIsoOrNull(p.requestedAt) || nowIso(),
         answeredAt: toIsoOrNull(p.answeredAt),
         status: normalizeStatus(p.status),
@@ -211,27 +199,36 @@ export async function importFromJsonBackup(json, mode = 'merge') {
       };
 
       if (mode === 'merge') {
-        // Best-effort dedupe: if an identical name+requestor+requestedAt exists, update it
         const existing = await db.prayers
           .filter(
             (x) =>
               x.requestorId === requestorId &&
-              (x.name || '').trim() === (record.name || '').trim() &&
-              (x.requestedAt || '').slice(0, 10) === (record.requestedAt || '').slice(0, 10)
+              (x.name || '').trim() === record.name &&
+              (x.requestedAt || '').slice(0, 10) === record.requestedAt.slice(0, 10)
           )
           .first();
 
         if (existing) {
           await db.prayers.update(existing.id, record);
+          updatedPrs++;
           continue;
         }
       }
 
       await db.prayers.add(record);
+      addedPrs++;
     }
   });
 
-  return { ok: true };
+  // NEW: broadcast a "db changed" event so UI can refresh without a full reload
+  window.dispatchEvent(new CustomEvent('db:changed', {
+    detail: {
+      source: 'import-json',
+      counts: { addedCats, updatedCats, addedReqs, updatedReqs, addedPrs, updatedPrs },
+    },
+  }));
+
+  return { ok: true, counts: { addedCats, updatedCats, addedReqs, updatedReqs, addedPrs, updatedPrs } };
 }
 
 // ---------- IMPORT (CSV bundle) ----------
@@ -242,24 +239,23 @@ export async function importFromCsvBundle(files, mode = 'merge') {
     throw new Error('Please provide all three CSV files (categories, requestors, prayers).');
   }
 
-  // Parse CSVs
   const [catsRows, reqsRows, prayRows] = await Promise.all([
     parseCsvFile(categoriesFile),
     parseCsvFile(requestorsFile),
     parseCsvFile(prayersFile),
   ]);
 
-  // Normalize row access with case-insensitive headers
-  const catRows = catsRows.map((row) => {
+  // Map headers (lenient)
+  const catMapped = catsRows.map((row) => {
     const H = headerMap(row);
     return {
       name: row[H('name')],
       description: row[H('description')],
-      showSingle: row[H('showsingle')], // accepts true/false/1/0/yes/no
+      showSingle: row[H('showsingle')],
     };
   });
 
-  const reqRows = reqsRows.map((row) => {
+  const reqMapped = reqsRows.map((row) => {
     const H = headerMap(row);
     return {
       categoryName: row[H('category')] ?? row[H('requestorcategory')],
@@ -269,7 +265,7 @@ export async function importFromCsvBundle(files, mode = 'merge') {
     };
   });
 
-  const prRows = prayRows.map((row) => {
+  const prayMapped = prayRows.map((row) => {
     const H = headerMap(row);
     return {
       categoryName: row[H('category')] ?? row[H('requestorcategory')],
@@ -283,15 +279,18 @@ export async function importFromCsvBundle(files, mode = 'merge') {
     };
   });
 
-  // Reuse the JSON import pipeline by massaging into the same shape
-  const payload = {
-    meta: { type: 'prayer-journal-backup', version: schemaVersion, exportedAt: nowIso() },
-    data: {
-      categories: catRows,
-      requestors: reqRows,
-      prayers: prRows,
-    },
+  // NEW: drop blank lines / nameless rows
+  const cleaned = {
+    categories: catMapped.filter((c) => String(c?.name || '').trim() !== ''),
+    requestors: reqMapped.filter((r) => String(r?.name || '').trim() !== ''),
+    prayers: prayMapped.filter((p) => String(p?.name || '').trim() !== ''),
   };
 
+  const payload = {
+    meta: { type: 'prayer-journal-backup', version: schemaVersion, exportedAt: nowIso() },
+    data: cleaned,
+  };
+
+  // Reuse JSON import (which now also broadcasts db:changed)
   return importFromJsonBackup(payload, mode);
 }

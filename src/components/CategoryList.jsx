@@ -70,6 +70,14 @@ function CategoryList() {
   // Initial load
   useEffect(() => { loadCategories(); }, []);
 
+  // Refresh categories (and their requestors) when DB changes (e.g., after import)
+useEffect(() => {
+  const onDbChanged = () => loadCategories();
+  window.addEventListener('db:changed', onDbChanged);
+  return () => window.removeEventListener('db:changed', onDbChanged);
+}, []); // mount once, cleanup on unmount
+
+
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-4">Categories</h2>
