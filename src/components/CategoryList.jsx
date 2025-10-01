@@ -79,7 +79,7 @@ useEffect(() => {
 
 
   return (
-    <div className="p-4">
+    <div className="p-4 pb-24">
       <h2 className="text-2xl font-bold mb-4">Categories</h2>
 
       {/* Add Category Form */}

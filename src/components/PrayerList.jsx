@@ -88,7 +88,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   const showFab = useMemo(() => !showAddForm, [showAddForm]);
 
   return (
-    <div className="relative h-full overflow-auto pb-20 p-4">
+    <div className="relative overflow-y-auto p-4 pb-24">
       {/* Sticky Add Form */}
       {showAddForm && (
         <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-700 rounded-b-lg shadow-lg -mx-4 px-4 pt-4 pb-3">
