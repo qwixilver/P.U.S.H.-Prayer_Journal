@@ -1,45 +1,60 @@
 // src/App.jsx
-// Main application component: sets up the overall layout and view switching logic.
+// Root of the app: holds which tab is active and wires together the main views.
+// NEW:
+// - Tracks `singleTargetId` so we can open SingleView focused on a specific prayer.
+// - Passes `onOpenSingle` down to PrayerList (Daily tab).
+// - Passes `initialPrayerId` into SingleView.
+// - When switching away from Single, clears the target (so Single returns to random mode next time).
 
 import React, { useState } from 'react';
-// Bottom navigation bar component (will hold the tab buttons).
 import BottomNav from './components/BottomNav';
-// Individual view components for different screens.
-import SingleView from './components/SingleView';
-import CategoryList from './components/CategoryList';
-import PrayerList from './components/PrayerList';
+import PrayerList from './components/PrayerList';    // Daily / Security feed
+import SingleView from './components/SingleView';     // Single-card view (random or targeted)
+import CategoryList from './components/CategoryList'; // Categories management
 
-// IndexedDB instance (we'll use this to load and save data locally).
-import { db } from './db';
+export default function App() {
+  // Tabs: 'single' | 'daily' | 'categories' | 'security'
+  const [activeTab, setActiveTab] = useState('daily');
 
-function App() {
-  // currentView holds the index of the active screen (0 = SingleView, 1 = CategoryList, etc.).
-  const [currentView, setCurrentView] = useState(0);
+  // When user chooses "open in single" for a specific prayer, we store its id here.
+  // We pass this id into <SingleView initialPrayerId={...} />.
+  const [singleTargetId, setSingleTargetId] = useState(null);
 
-  // Define an array mapping indices to components.
-  // We pass props (like viewType) to customize behavior.
-  const views = [
-    <SingleView />,                       // Random single prayer view
-    <PrayerList viewType="daily" />,    // Daily list of prayers
-    <CategoryList />,                     // Quick list by category
-    <PrayerList viewType="security" />, // Security-only prayers
-  ];
+  // Callback given to Daily tab so it can navigate to Single with a specific prayer id.
+  const openInSingle = (prayerId) => {
+    setSingleTargetId(prayerId);
+    setActiveTab('single');
+  };
+
+  // When user manually changes tabs:
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    // If leaving the Single tab, clear the target so it returns to "random" next time.
+    if (tab !== 'single' && singleTargetId !== null) {
+      setSingleTargetId(null);
+    }
+  };
 
   return (
-    // Container flex column takes full screen height for layout.
-    <div className="flex flex-col h-screen">
-      {/* Main content area: grows to fill and scrolls if necessary */}
-      <main className="flex-grow overflow-auto">
-        {views[currentView]}
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+      {/* Main content area */}
+      <main className="flex-1 h-[calc(100vh-64px)]"> 
+        {/* Pick the active tab's view */}
+        {activeTab === 'daily' && (
+          <PrayerList viewType="daily" onOpenSingle={openInSingle} />
+        )}
+        {activeTab === 'security' && (
+          <PrayerList viewType="security" onOpenSingle={openInSingle} />
+        )}
+        {activeTab === 'categories' && <CategoryList />}
+
+        {activeTab === 'single' && (
+          <SingleView initialPrayerId={singleTargetId} />
+        )}
       </main>
 
-      {/* Persistent bottom navigation bar */}
-      <BottomNav
-        currentIndex={currentView}
-        onChange={(newIndex) => setCurrentView(newIndex)}
-      />
+      {/* Bottom navigation at the bottom of the screen */}
+      <BottomNav active={activeTab} onChange={handleTabChange} />
     </div>
   );
 }
-
-export default App;

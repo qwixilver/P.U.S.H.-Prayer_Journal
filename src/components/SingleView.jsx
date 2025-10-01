@@ -1,23 +1,42 @@
 // src/components/SingleView.jsx
-// Shows one random "requested" prayer. Prefers categories marked showSingle,
-// but gracefully falls back to any requested prayer if none are flagged.
+// Shows one prayer card. If `initialPrayerId` is provided, it loads that prayer.
+// Otherwise it picks a random "requested" prayer, preferring categories with showSingle=true,
+// and falling back to any requested prayer if none are flagged.
+// "Next" always picks another random requested prayer (same behavior as before).
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { db } from '../db';
 
-export default function SingleView() {
+export default function SingleView({ initialPrayerId = null }) {
   const [prayer, setPrayer] = useState(null);
   const [hint, setHint] = useState('');
 
-  // Normalize a status string to 'requested'|'answered'
-  const normStatus = (s) => (String(s || '').toLowerCase() === 'answered' ? 'answered' : 'requested');
+  const normStatus = (s) =>
+    String(s || '').toLowerCase() === 'answered' ? 'answered' : 'requested';
 
+  // Load one prayer by id (used when initialPrayerId is set)
+  const loadPrayerById = async (id) => {
+    try {
+      const p = await db.prayers.get(id);
+      if (!p) {
+        setPrayer(null);
+        setHint('Prayer not found.');
+        return;
+      }
+      const requestor = await db.requestors.get(p.requestorId);
+      const category = requestor ? await db.categories.get(requestor.categoryId) : null;
+      setPrayer({ ...p, requestor, category });
+      setHint('');
+    } catch (e) {
+      console.error('SingleView loadPrayerById error:', e);
+      setPrayer(null);
+    }
+  };
+
+  // Load one random requested prayer (preferring showSingle categories)
   const loadRandomPrayer = async () => {
     try {
-      // 1) Load everything and filter in JS (avoids needing an index on 'status')
       const allPrayers = await db.prayers.toArray();
-
-      // 2) Enrich each with its Requestor + Category
       const enriched = await Promise.all(
         allPrayers.map(async (p) => {
           const requestor = await db.requestors.get(p.requestorId);
@@ -26,16 +45,12 @@ export default function SingleView() {
         })
       );
 
-      // 3) Keep only 'requested'
       const requested = enriched.filter((p) => normStatus(p.status) === 'requested');
-
-      // 4) Try “single-eligible” first
       const singles = requested.filter((p) => p.category && (p.category.showSingle === 1 || p.category.showSingle === true));
 
       let pool = singles;
       setHint('');
       if (pool.length === 0) {
-        // 5) Fallback to *all* requested if no categories are flagged
         pool = requested;
         if (requested.length > 0) {
           setHint(
@@ -52,21 +67,32 @@ export default function SingleView() {
       const pick = pool[Math.floor(Math.random() * pool.length)];
       setPrayer(pick);
     } catch (e) {
-      console.error('SingleView load error:', e);
+      console.error('SingleView loadRandomPrayer error:', e);
       setPrayer(null);
     }
   };
 
+  // On mount and whenever `initialPrayerId` changes:
   useEffect(() => {
-    loadRandomPrayer();
-  }, []);
+    if (initialPrayerId != null) {
+      loadPrayerById(initialPrayerId);
+    } else {
+      loadRandomPrayer();
+    }
+  }, [initialPrayerId]);
 
-  // Also refresh when other parts of the app import data, etc.
+  // Also refresh when DB changes (e.g., after imports)
   useEffect(() => {
-    const onDbChanged = () => loadRandomPrayer();
+    const onDbChanged = () => {
+      if (initialPrayerId != null) {
+        loadPrayerById(initialPrayerId);
+      } else {
+        loadRandomPrayer();
+      }
+    };
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
-  }, []);
+  }, [initialPrayerId]);
 
   if (!prayer) {
     return (

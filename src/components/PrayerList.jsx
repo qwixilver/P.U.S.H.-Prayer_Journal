@@ -1,34 +1,64 @@
 // src/components/PrayerList.jsx
-// This component renders a list of prayers based on the `viewType` prop:
-// - 'daily': shows prayers with status 'requested', sorted by request date, and includes a form to add and edit prayers
-// - 'security': shows prayers where security=true, sorted by request date, with edit functionality
+// Daily/Security list with:
+// - FAB to open "Add Prayer" sticky form (unchanged from your last version)
+// - Inline EXPAND: clicking the card body toggles a fuller details view
+// - "Open in Single View" button: jumps to Single tab focused on this prayer
+//
+// Requires App.jsx to pass:
+//   <PrayerList onOpenSingle={(id) => ...} />
+//
+// Notes:
+// - We stop propagation on the Edit button so it doesn't trigger expand.
+// - Expanded view shows more spacing and keeps description visible.
+// - The sticky Add form closes on Save/Cancel as before.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
 import PrayerForm from './PrayerForm';
 import PrayerEditForm from './PrayerEditForm';
 
-/**
- * @param {{ viewType: 'daily' | 'security' }} props
- */
-function PrayerList({ viewType }) {
-  // Local state
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString();
+}
+const normStatus = (s) =>
+  String(s || '').toLowerCase() === 'answered' ? 'answered' : 'requested';
+
+export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   const [prayers, setPrayers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editMode, setEditMode] = useState({}); // track which prayers are in edit mode
+  const [editing, setEditing] = useState({});
+  const [expanded, setExpanded] = useState({}); // NEW: track which cards are expanded
+  const [showAddForm, setShowAddForm] = useState(false);
 
-  // Fetch prayers based on viewType
   const loadPrayers = async () => {
     setLoading(true);
     try {
-      let all = await db.prayers.toArray();
+      const all = await db.prayers.toArray();
+      const enriched = await Promise.all(
+        all.map(async (p) => {
+          const requestor = await db.requestors.get(p.requestorId);
+          const category = requestor ? await db.categories.get(requestor.categoryId) : null;
+          return { ...p, requestor, category };
+        })
+      );
+
+      let filtered = enriched;
       if (viewType === 'daily') {
-        all = all.filter(p => p.status === 'requested');
+        filtered = enriched.filter((p) => normStatus(p.status) === 'requested');
       } else if (viewType === 'security') {
-        all = all.filter(p => p.security === 1);
+        filtered = enriched.filter((p) => Number(p.security) === 1);
       }
-      all.sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
-      setPrayers(all);
+
+      filtered.sort((a, b) => {
+        const ta = new Date(a.requestedAt).getTime() || 0;
+        const tb = new Date(b.requestedAt).getTime() || 0;
+        return tb - ta;
+      });
+
+      setPrayers(filtered);
     } catch (err) {
       console.error('Error loading prayers:', err);
       setPrayers([]);
@@ -36,96 +66,184 @@ function PrayerList({ viewType }) {
     setLoading(false);
   };
 
-  // Load on mount and when viewType changes
   useEffect(() => {
     loadPrayers();
   }, [viewType]);
 
-  // Refresh the list whenever imports or other DB-wide changes finish
-useEffect(() => {
-  const onDbChanged = () => loadPrayers();
-  window.addEventListener('db:changed', onDbChanged);
-  return () => window.removeEventListener('db:changed', onDbChanged);
-}, []); // empty deps: mount once, cleanup on unmount
+  useEffect(() => {
+    const onDbChanged = () => loadPrayers();
+    window.addEventListener('db:changed', onDbChanged);
+    return () => window.removeEventListener('db:changed', onDbChanged);
+  }, []);
 
-
-  // Enter edit mode
-  const onEditClick = id => {
-    setEditMode(prev => ({ ...prev, [id]: true }));
+  const handleAddSuccess = async () => {
+    await loadPrayers();
+    setShowAddForm(false);
   };
+  const handleAddCancel = () => setShowAddForm(false);
 
-  // Exit edit mode without saving
-  const onCancelEdit = id => {
-    setEditMode(prev => ({ ...prev, [id]: false }));
-  };
+  const toggleEdit = (id, on) => setEditing((prev) => ({ ...prev, [id]: on }));
+  const toggleExpand = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  // After saving, reload and exit edit mode
-  const onSaveEdit = id => {
-    loadPrayers();
-    setEditMode(prev => ({ ...prev, [id]: false }));
-  };
-
-  // Determine title
-  const title = viewType === 'daily' ? 'Daily Prayers' : 'Security Prayers';
+  const showFab = useMemo(() => !showAddForm, [showAddForm]);
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-4">{title}</h2>
-
-      {/* Show add form only in daily view */}
-      {viewType === 'daily' && (
-        <div className="mb-6">
-          <PrayerForm onSuccess={loadPrayers} />
+    <div className="relative h-full overflow-auto pb-20 p-4">
+      {/* Sticky Add Form */}
+      {showAddForm && (
+        <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-700 rounded-b-lg shadow-lg -mx-4 px-4 pt-4 pb-3">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold text-white">Add Prayer</h2>
+              <button
+                onClick={handleAddCancel}
+                className="px-2 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+                title="Minimize"
+              >
+                Minimize
+              </button>
+            </div>
+            <PrayerForm onSuccess={handleAddSuccess} onCancel={handleAddCancel} />
+          </div>
         </div>
       )}
 
-      {/* Loading */}
-      {loading && <p>Loading...</p>}
+      <h2 className="text-2xl font-bold mb-4">
+        {viewType === 'security' ? 'Security View' : 'Daily Prayers'}
+      </h2>
 
-      {/* No prayers */}
+      {loading && <p className="text-gray-400">Loading…</p>}
       {!loading && prayers.length === 0 && (
         <p className="text-gray-400">No prayers to display.</p>
       )}
 
-      {/* List prayers */}
-      {!loading && prayers.length > 0 && (
-        <ul className="space-y-3">
-          {prayers.map(p => (
-            <li key={p.id} className="bg-gray-800 p-3 rounded-lg shadow-sm">
-              {editMode[p.id] ? (
+      <ul className="space-y-3">
+        {prayers.map((p) => {
+          const isEditing = !!editing[p.id];
+          const isExpanded = !!expanded[p.id];
+          return (
+            <li key={p.id} className="bg-gray-800 rounded-lg p-3 shadow">
+              {isEditing ? (
                 <PrayerEditForm
                   prayer={p}
-                  onCancel={() => onCancelEdit(p.id)}
-                  onSuccess={() => onSaveEdit(p.id)}
+                  onCancel={() => toggleEdit(p.id, false)}
+                  onSuccess={async () => {
+                    await loadPrayers();
+                    toggleEdit(p.id, false);
+                  }}
                 />
               ) : (
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-semibold text-lg text-white">{p.name}</h3>
-                    <p className="text-gray-300 text-sm mt-1">{p.description}</p>
-                    <p className="text-gray-500 text-xs mt-1">
-                      Requested: {new Date(p.requestedAt).toLocaleDateString()}
-                    </p>
-                    {p.status === 'answered' && (
-                      <p className="text-green-400 text-xs">
-                        Answered: {new Date(p.answeredAt).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => onEditClick(p.id)}
-                    className="text-blue-400 text-sm"
+                <>
+                  {/* Card header: click area toggles expand (except the buttons) */}
+                  <div
+                    className="flex items-start justify-between cursor-pointer select-none"
+                    onClick={() => toggleExpand(p.id)}
                   >
-                    Edit
-                  </button>
-                </div>
+                    <div>
+                      <h4 className="text-white font-semibold">{p.name}</h4>
+                      <div className="text-gray-400 text-sm space-x-2">
+                        <span>{p.requestor?.name || 'Unknown'}</span>
+                        <span>•</span>
+                        <span>{p.category?.name || 'Uncategorized'}</span>
+                        {p.requestedAt && (
+                          <>
+                            <span>•</span>
+                            <span>{formatDate(p.requestedAt)}</span>
+                          </>
+                        )}
+                        {Number(p.security) === 1 && (
+                          <>
+                            <span>•</span>
+                            <span className="uppercase text-xs tracking-wide text-yellow-300">
+                              Security
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* Open in Single View button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation(); // don't toggle expand
+                          if (typeof onOpenSingle === 'function') {
+                            onOpenSingle(p.id);
+                          } else {
+                            console.warn('onOpenSingle not provided to PrayerList');
+                          }
+                        }}
+                        className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+                        title="Open in Single View"
+                      >
+                        Single
+                      </button>
+
+                      {/* Edit button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation(); // don't toggle expand
+                          toggleEdit(p.id, true);
+                        }}
+                        className="text-sm px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Condensed description always visible a bit; 
+                      Expanded area shows the full details with nicer spacing */}
+                  {p.description && !isExpanded && (
+                    <p className="mt-2 text-gray-200 line-clamp-3 whitespace-pre-wrap">
+                      {p.description}
+                    </p>
+                  )}
+
+                  {isExpanded && (
+                    <div className="mt-3 text-gray-200 space-y-2">
+                      <p className="whitespace-pre-wrap">{p.description || '(No additional details.)'}</p>
+                      {/* You can add more fields here later (e.g., answered notes, tags, etc.) */}
+                      <div className="text-xs text-gray-400">
+                        Tap card to collapse.
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </li>
-          ))}
-        </ul>
+          );
+        })}
+      </ul>
+
+      {/* Floating Add button */}
+      {showFab && (
+        <button
+          onClick={() => setShowAddForm(true)}
+          className="
+            fixed bottom-20 right-5 z-40
+            w-14 h-14 rounded-full
+            bg-yellow-500 text-black
+            shadow-lg hover:bg-yellow-600
+            flex items-center justify-center
+            focus:outline-none focus:ring-4 focus:ring-yellow-300
+          "
+          aria-label="Add prayer"
+          title="Add prayer"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-7 h-7"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+          </svg>
+        </button>
       )}
     </div>
   );
 }
-
-export default PrayerList;

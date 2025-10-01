@@ -1,5 +1,13 @@
 // src/components/BackupRestorePanel.jsx
-import React, { useState } from 'react';
+// UI for exporting JSON and importing JSON with a hidden "Advanced (CSV)" easter egg.
+// - JSON backup/restore is always visible.
+// - AppSheet CSV import is hidden until you unlock it by:
+//     * clicking the "Backup & Restore" header 7 times within 5 seconds, OR
+//     * long-pressing the header for 1.5 seconds (mobile-friendly).
+// - Once unlocked, it persists via localStorage ("pj_unlockCsvImport").
+// - You can hide it again from inside the advanced section.
+
+import React, { useEffect, useRef, useState } from 'react';
 import {
   exportAllAsJson,
   downloadJson,
@@ -7,15 +15,79 @@ import {
   importFromCsvBundle,
 } from '../utils/backup';
 
+const UNLOCK_KEY = 'pj_unlockCsvImport';
+
 export default function BackupRestorePanel() {
+  // ---- existing states ----
   const [mode, setMode] = useState('merge');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+
+  const [jsonFile, setJsonFile] = useState(null);
+
+  // CSV files (hidden until "advanced" unlocked)
   const [categoriesCsv, setCategoriesCsv] = useState(null);
   const [requestorsCsv, setRequestorsCsv] = useState(null);
   const [prayersCsv, setPrayersCsv] = useState(null);
-  const [jsonFile, setJsonFile] = useState(null);
 
+  // ---- easter egg state ----
+  const [advancedVisible, setAdvancedVisible] = useState(false);
+  const clickCountRef = useRef(0);
+  const clickTimerRef = useRef(null);
+  const pressTimerRef = useRef(null);
+
+  // On mount, restore unlock from localStorage or URL hash (optional shortcut)
+  useEffect(() => {
+    const fromStorage = localStorage.getItem(UNLOCK_KEY);
+    if (fromStorage === '1') setAdvancedVisible(true);
+    if (window.location.hash === '#unlock-csv') setAdvancedVisible(true);
+  }, []);
+
+  // When visibility changes, persist it for convenience
+  useEffect(() => {
+    if (advancedVisible) {
+      localStorage.setItem(UNLOCK_KEY, '1');
+    } else {
+      localStorage.removeItem(UNLOCK_KEY);
+    }
+  }, [advancedVisible]);
+
+  // Desktop/mobile friendly unlock gestures on the header:
+  //  - 7 clicks within 5 seconds
+  //  - long-press (~1500ms)
+  function handleHeaderClick() {
+    clickCountRef.current += 1;
+
+    // Start/reset a 5s window
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      clickCountRef.current = 0;
+    }, 5000);
+
+    if (clickCountRef.current >= 7) {
+      clickCountRef.current = 0;
+      clearTimeout(clickTimerRef.current);
+      setAdvancedVisible(true);
+      setMessage('Advanced (CSV) import unlocked.');
+    }
+  }
+
+  function handleHeaderPointerDown() {
+    // Long-press unlock after 1500ms
+    pressTimerRef.current = setTimeout(() => {
+      setAdvancedVisible(true);
+      setMessage('Advanced (CSV) import unlocked.');
+    }, 1500);
+  }
+
+  function handleHeaderPointerUpOrLeave() {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  }
+
+  // ---- JSON export/import ----
   async function handleExportJson() {
     try {
       setBusy(true);
@@ -31,6 +103,22 @@ export default function BackupRestorePanel() {
     }
   }
 
+  function summarizeCounts(prefix, res) {
+    const c = res?.counts || {};
+    const s = res?.skipped || {};
+    const skippedTotal =
+      (s.categories?.length || 0) + (s.requestors?.length || 0) + (s.prayers?.length || 0);
+    return [
+      `${prefix} complete.`,
+      `Categories +${c.addedCats || 0}/${c.updatedCats || 0}`,
+      `Requestors +${c.addedReqs || 0}/${c.updatedReqs || 0}`,
+      `Prayers +${c.addedPrs || 0}/${c.updatedPrs || 0}`,
+      skippedTotal ? `Skipped ${skippedTotal} row(s). See console for details.` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
   async function handleImportJson() {
     if (!jsonFile) {
       setMessage('Please choose a JSON backup file first.');
@@ -42,13 +130,8 @@ export default function BackupRestorePanel() {
       const text = await jsonFile.text();
       const json = JSON.parse(text);
       const res = await importFromJsonBackup(json, mode);
-      const c = res?.counts || {};
-      setMessage(
-        `Import complete. Categories +${c.addedCats || 0}/${c.updatedCats || 0}, ` +
-        `Requestors +${c.addedReqs || 0}/${c.updatedReqs || 0}, ` +
-        `Prayers +${c.addedPrs || 0}/${c.updatedPrs || 0}`
-      );
-      // No manual refresh needed—listeners update via 'db:changed'
+      setMessage(summarizeCounts('JSON import', res));
+      // Other views refresh automatically via 'db:changed' broadcast.
     } catch (e) {
       console.error(e);
       setMessage('Import failed (see console).');
@@ -57,24 +140,21 @@ export default function BackupRestorePanel() {
     }
   }
 
+  // ---- Advanced (hidden) CSV import ----
   async function handleImportCsv() {
-    if (!categoriesCsv || !requestorsCsv || !prayersCsv) {
-      setMessage('Please choose all three CSV files.');
+    if (!categoriesCsv && !requestorsCsv && !prayersCsv) {
+      setMessage('Choose at least one CSV (categories, requestors, or prayers).');
       return;
     }
     try {
       setBusy(true);
-      setMessage('Importing CSV bundle…');
+      setMessage('Importing CSV…');
       const res = await importFromCsvBundle(
         { categoriesFile: categoriesCsv, requestorsFile: requestorsCsv, prayersFile: prayersCsv },
         mode
       );
-      const c = res?.counts || {};
-      setMessage(
-        `CSV import complete. Categories +${c.addedCats || 0}/${c.updatedCats || 0}, ` +
-        `Requestors +${c.addedReqs || 0}/${c.updatedReqs || 0}, ` +
-        `Prayers +${c.addedPrs || 0}/${c.updatedPrs || 0}`
-      );
+      setMessage(summarizeCounts('CSV import', res));
+      // Auto-refresh is handled by 'db:changed'.
     } catch (e) {
       console.error(e);
       setMessage('CSV import failed (see console).');
@@ -85,8 +165,19 @@ export default function BackupRestorePanel() {
 
   return (
     <div className="mt-8 p-4 bg-gray-800 rounded-lg">
-      <h3 className="text-xl font-semibold text-white mb-3">Backup &amp; Restore</h3>
+      {/* Header with hidden unlock gestures */}
+      <h3
+        className="text-xl font-semibold text-white mb-3 select-none"
+        title="Backup & Restore"
+        onClick={handleHeaderClick}
+        onPointerDown={handleHeaderPointerDown}
+        onPointerUp={handleHeaderPointerUpOrLeave}
+        onPointerLeave={handleHeaderPointerUpOrLeave}
+      >
+        Backup &amp; Restore
+      </h3>
 
+      {/* Import mode (applies to JSON and CSV) */}
       <div className="mb-4">
         <span className="text-gray-300 mr-3">Import Mode:</span>
         <label className="mr-4">
@@ -98,7 +189,7 @@ export default function BackupRestorePanel() {
             onChange={() => setMode('merge')}
             className="mr-1"
           />
-          Merge (upsert by names)
+          Merge (upsert by names/keys)
         </label>
         <label>
           <input
@@ -113,6 +204,7 @@ export default function BackupRestorePanel() {
         </label>
       </div>
 
+      {/* Export JSON */}
       <div className="mb-6">
         <button
           onClick={handleExportJson}
@@ -123,6 +215,7 @@ export default function BackupRestorePanel() {
         </button>
       </div>
 
+      {/* Import JSON */}
       <div className="mb-6">
         <p className="text-gray-300 mb-2">Import JSON Backup</p>
         <input
@@ -140,31 +233,64 @@ export default function BackupRestorePanel() {
         </button>
       </div>
 
-      <div className="mb-2">
-        <p className="text-gray-300 mb-2">Import CSVs from AppSheet</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">Categories CSV</label>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => setCategoriesCsv(e.target.files?.[0] || null)} />
+      {/* Advanced (CSV) — hidden until unlocked */}
+      {advancedVisible && (
+        <div className="mt-8 border-t border-gray-700 pt-6">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-lg font-semibold text-yellow-300">
+              Advanced (CSV) — AppSheet Import
+            </h4>
+            <button
+              onClick={() => setAdvancedVisible(false)}
+              className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+              title="Hide this section"
+            >
+              Hide
+            </button>
           </div>
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">Requestors CSV</label>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => setRequestorsCsv(e.target.files?.[0] || null)} />
-          </div>
-          <div>
-            <label className="block text-gray-400 text-sm mb-1">Prayers CSV</label>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => setPrayersCsv(e.target.files?.[0] || null)} />
-          </div>
-        </div>
-        <button
-          onClick={handleImportCsv}
-          disabled={busy}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          Import CSV Bundle
-        </button>
-      </div>
 
+          <p className="text-gray-400 text-sm mb-3">
+            Optional CSV import for legacy AppSheet exports. Provide any subset of the three files.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div>
+              <label className="block text-gray-400 text-sm mb-1">Categories CSV (optional)</label>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setCategoriesCsv(e.target.files?.[0] || null)}
+              />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-sm mb-1">Requestors CSV (optional)</label>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setRequestorsCsv(e.target.files?.[0] || null)}
+              />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-sm mb-1">Prayers CSV (optional)</label>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setPrayersCsv(e.target.files?.[0] || null)}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleImportCsv}
+            disabled={busy}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            Import CSV
+          </button>
+        </div>
+      )}
+
+      {/* Status line */}
       {message && <p className="mt-4 text-gray-300">{message}</p>}
     </div>
   );
