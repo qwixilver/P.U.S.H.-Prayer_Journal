@@ -7,6 +7,7 @@ import BottomNav from './components/BottomNav';
 import PrayerList from './components/PrayerList';
 import SingleView from './components/SingleView';
 import CategoryList from './components/CategoryList';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('daily');
@@ -28,11 +29,13 @@ export default function App() {
     <div className="min-h-screen bg-gray-900 text-white flex flex-col">
       {/* Main grows and scrolls; we leave bottom padding in children to avoid nav overlap */}
       <main className="flex-1 overflow-y-auto">
-        {activeTab === 'daily' && <PrayerList viewType="daily" onOpenSingle={openInSingle} />}
-        {activeTab === 'security' && <PrayerList viewType="security" onOpenSingle={openInSingle} />}
-        {activeTab === 'categories' && <CategoryList />}
-        {activeTab === 'single' && <SingleView initialPrayerId={singleTargetId} />}
-      </main>
+  <ErrorBoundary>
+    {activeTab === 'daily' && <PrayerList viewType="daily" onOpenSingle={openInSingle} />}
+    {activeTab === 'security' && <PrayerList viewType="security" onOpenSingle={openInSingle} />}
+    {activeTab === 'categories' && <CategoryList />}
+    {activeTab === 'single' && <SingleView initialPrayerId={singleTargetId} />}
+  </ErrorBoundary>
+</main>
 
       <BottomNav active={activeTab} onChange={handleTabChange} />
     </div>
