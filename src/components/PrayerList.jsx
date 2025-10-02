@@ -1,16 +1,16 @@
 // src/components/PrayerList.jsx
-// Daily/Security list with:
-// - FAB to open "Add Prayer" sticky form (unchanged from your last version)
-// - Inline EXPAND: clicking the card body toggles a fuller details view
-// - "Open in Single View" button: jumps to Single tab focused on this prayer
+// Daily/Security list grouped into Category sections.
+// - Non-editable Category headers for readability when many prayers exist.
+// - Preserves: FAB (add form), inline expand/collapse, "Open in Single", Edit.
+// - Works for both viewType="daily" and viewType="security".
 //
-// Requires App.jsx to pass:
-//   <PrayerList onOpenSingle={(id) => ...} />
+// Grouping rules:
+// - Category is taken from the prayer's requestor.categoryId.
+// - Missing category renders under an "Uncategorized" section.
+// - Categories are sorted alphabetically by name (can change easily).
 //
-// Notes:
-// - We stop propagation on the Edit button so it doesn't trigger expand.
-// - Expanded view shows more spacing and keeps description visible.
-// - The sticky Add form closes on Save/Cancel as before.
+// Layout:
+// - Top-level wrapper uses overflow-y-auto + pb-24 so nothing hides under BottomNav.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
@@ -29,14 +29,21 @@ const normStatus = (s) =>
 export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   const [prayers, setPrayers] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Per-item UI state
   const [editing, setEditing] = useState({});
-  const [expanded, setExpanded] = useState({}); // NEW: track which cards are expanded
+  const [expanded, setExpanded] = useState({});
+
+  // Add form visibility (FAB opens it)
   const [showAddForm, setShowAddForm] = useState(false);
 
+  // -------- Data loading --------
   const loadPrayers = async () => {
     setLoading(true);
     try {
       const all = await db.prayers.toArray();
+
+      // Enrich with requestor & category for each prayer
       const enriched = await Promise.all(
         all.map(async (p) => {
           const requestor = await db.requestors.get(p.requestorId);
@@ -45,6 +52,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
         })
       );
 
+      // Filter per tab
       let filtered = enriched;
       if (viewType === 'daily') {
         filtered = enriched.filter((p) => normStatus(p.status) === 'requested');
@@ -52,6 +60,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
         filtered = enriched.filter((p) => Number(p.security) === 1);
       }
 
+      // Sort prayers newest-first within their category sections
       filtered.sort((a, b) => {
         const ta = new Date(a.requestedAt).getTime() || 0;
         const tb = new Date(b.requestedAt).getTime() || 0;
@@ -70,12 +79,41 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
     loadPrayers();
   }, [viewType]);
 
+  // Auto-refresh after imports or bulk DB changes
   useEffect(() => {
     const onDbChanged = () => loadPrayers();
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
   }, []);
 
+  // -------- Grouping into sections --------
+  // Build: [{ categoryId, categoryName, items: [...] }, ...]
+  const sections = useMemo(() => {
+    // Bucket by categoryId (including undefined/null)
+    const buckets = new Map();
+
+    for (const p of prayers) {
+      const catId = p.category?.id ?? null;
+      const catName = (p.category?.name || 'Uncategorized').trim() || 'Uncategorized';
+
+      if (!buckets.has(catId)) {
+        buckets.set(catId, {
+          categoryId: catId,
+          categoryName: catName,
+          items: [],
+        });
+      }
+      buckets.get(catId).items.push(p);
+    }
+
+    // To keep UX predictable, sort categories alphabetically by name
+    const list = Array.from(buckets.values());
+    list.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+
+    return list;
+  }, [prayers]);
+
+  // -------- UI handlers --------
   const handleAddSuccess = async () => {
     await loadPrayers();
     setShowAddForm(false);
@@ -87,9 +125,10 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
 
   const showFab = useMemo(() => !showAddForm, [showAddForm]);
 
+  // -------- Render --------
   return (
     <div className="relative overflow-y-auto p-4 pb-24">
-      {/* Sticky Add Form */}
+      {/* Sticky Add Form (revealed by FAB) */}
       {showAddForm && (
         <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-700 rounded-b-lg shadow-lg -mx-4 px-4 pt-4 pb-3">
           <div className="max-w-3xl mx-auto">
@@ -117,106 +156,112 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
         <p className="text-gray-400">No prayers to display.</p>
       )}
 
-      <ul className="space-y-3">
-        {prayers.map((p) => {
-          const isEditing = !!editing[p.id];
-          const isExpanded = !!expanded[p.id];
-          return (
-            <li key={p.id} className="bg-gray-800 rounded-lg p-3 shadow">
-              {isEditing ? (
-                <PrayerEditForm
-                  prayer={p}
-                  onCancel={() => toggleEdit(p.id, false)}
-                  onSuccess={async () => {
-                    await loadPrayers();
-                    toggleEdit(p.id, false);
-                  }}
-                />
-              ) : (
-                <>
-                  {/* Card header: click area toggles expand (except the buttons) */}
-                  <div
-                    className="flex items-start justify-between cursor-pointer select-none"
-                    onClick={() => toggleExpand(p.id)}
-                  >
-                    <div>
-                      <h4 className="text-white font-semibold">{p.name}</h4>
-                      <div className="text-gray-400 text-sm space-x-2">
-                        <span>{p.requestor?.name || 'Unknown'}</span>
-                        <span>•</span>
-                        <span>{p.category?.name || 'Uncategorized'}</span>
-                        {p.requestedAt && (
-                          <>
-                            <span>•</span>
-                            <span>{formatDate(p.requestedAt)}</span>
-                          </>
-                        )}
-                        {Number(p.security) === 1 && (
-                          <>
-                            <span>•</span>
-                            <span className="uppercase text-xs tracking-wide text-yellow-300">
-                              Security
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
+      {/* Category sections */}
+      {!loading && sections.length > 0 && (
+        <div className="space-y-6">
+          {sections.map((section) => (
+            <section key={section.categoryId ?? 'uncat'}>
+              {/* NON-EDITABLE Category header */}
+              <div className="sticky top-0 -mx-4 px-4 py-2 bg-gray-900/95 backdrop-blur border-b border-gray-800 z-10">
+                <h3 className="text-lg font-semibold text-yellow-300">
+                  {section.categoryName}
+                </h3>
+              </div>
 
-                    <div className="flex items-center gap-2">
-                      {/* Open in Single View button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation(); // don't toggle expand
-                          if (typeof onOpenSingle === 'function') {
-                            onOpenSingle(p.id);
-                          } else {
-                            console.warn('onOpenSingle not provided to PrayerList');
-                          }
-                        }}
-                        className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
-                        title="Open in Single View"
-                      >
-                        Single
-                      </button>
+              {/* Items in this category */}
+              <ul className="mt-2 space-y-3">
+                {section.items.map((p) => {
+                  const isEditing = !!editing[p.id];
+                  const isExpanded = !!expanded[p.id];
 
-                      {/* Edit button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation(); // don't toggle expand
-                          toggleEdit(p.id, true);
-                        }}
-                        className="text-sm px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  </div>
+                  return (
+                    <li key={p.id} className="bg-gray-800 rounded-lg p-3 shadow">
+                      {isEditing ? (
+                        <PrayerEditForm
+                          prayer={p}
+                          onCancel={() => toggleEdit(p.id, false)}
+                          onSuccess={async () => {
+                            await loadPrayers();
+                            toggleEdit(p.id, false);
+                          }}
+                        />
+                      ) : (
+                        <>
+                          {/* Card header: click to expand; buttons stop propagation */}
+                          <div
+                            className="flex items-start justify-between cursor-pointer select-none"
+                            onClick={() => toggleExpand(p.id)}
+                          >
+                            <div>
+                              <h4 className="text-white font-semibold">{p.name}</h4>
+                              <div className="text-gray-400 text-sm space-x-2">
+                                <span>{p.requestor?.name || 'Unknown'}</span>
+                                {/* We *do not* show category here, the section already indicates it */}
+                                {p.requestedAt && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{formatDate(p.requestedAt)}</span>
+                                  </>
+                                )}
+                                {Number(p.security) === 1 && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="uppercase text-xs tracking-wide text-yellow-300">
+                                      Security
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
 
-                  {/* Condensed description always visible a bit; 
-                      Expanded area shows the full details with nicer spacing */}
-                  {p.description && !isExpanded && (
-                    <p className="mt-2 text-gray-200 line-clamp-3 whitespace-pre-wrap">
-                      {p.description}
-                    </p>
-                  )}
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (typeof onOpenSingle === 'function') onOpenSingle(p.id);
+                                }}
+                                className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+                                title="Open in Single View"
+                              >
+                                Single
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleEdit(p.id, true);
+                                }}
+                                className="text-sm px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </div>
 
-                  {isExpanded && (
-                    <div className="mt-3 text-gray-200 space-y-2">
-                      <p className="whitespace-pre-wrap">{p.description || '(No additional details.)'}</p>
-                      {/* You can add more fields here later (e.g., answered notes, tags, etc.) */}
-                      <div className="text-xs text-gray-400">
-                        Tap card to collapse.
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                          {p.description && !isExpanded && (
+                            <p className="mt-2 text-gray-200 line-clamp-3 whitespace-pre-wrap">
+                              {p.description}
+                            </p>
+                          )}
+                          {isExpanded && (
+                            <div className="mt-3 text-gray-200 space-y-2">
+                              <p className="whitespace-pre-wrap">
+                                {p.description || '(No additional details.)'}
+                              </p>
+                              <div className="text-xs text-gray-400">Tap card to collapse.</div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
 
-      {/* Floating Add button */}
+      {/* Floating Action Button */}
       {showFab && (
         <button
           onClick={() => setShowAddForm(true)}
