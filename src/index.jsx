@@ -11,6 +11,14 @@ import './index.css';
 // Import the root App component.
 import App from './App';
 
+// src/index.jsx (or src/App.jsx inside a useEffect(() => {...}, []))
+import { dbReady } from './db';
+
+dbReady().then(() => {
+  // Optional but nice: log counts quickly on boot
+  window.DEBUG_DB?.();
+});
+
 // Find the <div id="root"> in public/index.html.
 const rootElement = document.getElementById('root');
 
