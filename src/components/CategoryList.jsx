@@ -1,32 +1,26 @@
 // src/components/CategoryList.jsx
-// This component displays all categories, allows adding new ones via CategoryForm,
-// lets you add requestors via RequestorForm, supports editing requestors inline,
-// and now supports editing categories inline
+// Categories page with:
+// - Floating Action Button (FAB) to open a sticky "Add Category" form at the top
+// - Expandable category panels that show RequestorForm + requestor list
+// - Auto-refresh on db:changed
+// - Bottom padding so nothing sits under the BottomNav
 
 import React, { useEffect, useState } from 'react';
 import { db } from '../db';
 import CategoryForm from './CategoryForm';
-import CategoryEditForm from './CategoryEditForm';
 import RequestorForm from './RequestorForm';
-import RequestorEditForm from './RequestorEditForm';
-import BackupRestorePanel from './BackupRestorePanel';
-
 
 function CategoryList() {
-  // State for categories and loading
+  // Data state
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Track which categories are expanded
-  const [expanded, setExpanded] = useState({});
-  // Cache requestors per category
-  const [requestors, setRequestors] = useState({});
-  // Track which requestors are in edit mode
-  const [editMode, setEditMode] = useState({});
-  // Track which categories are in edit mode
-  const [categoryEditMode, setCategoryEditMode] = useState({});
+  // UI state
+  const [expanded, setExpanded] = useState({});   // which category ids are expanded
+  const [requestors, setRequestors] = useState({}); // cache: { [catId]: Requestor[] }
+  const [showAddForm, setShowAddForm] = useState(false); // FAB → sticky add form
 
-  // Load all categories
+  // ----- data loading -----
   const loadCategories = async () => {
     setLoading(true);
     try {
@@ -38,133 +32,154 @@ function CategoryList() {
     setLoading(false);
   };
 
-  // Load requestors for a category
   const loadRequestors = async (catId) => {
     try {
       const reqs = await db.requestors.where('categoryId').equals(catId).toArray();
-      setRequestors(prev => ({ ...prev, [catId]: reqs }));
-    } catch (e) {
-      console.error(`Error loading requestors for category ${catId}:`, e);
+      setRequestors((prev) => ({ ...prev, [catId]: reqs }));
+    } catch (error) {
+      console.error(`Error loading requestors for category ${catId}:`, error);
     }
   };
 
-  // Expand/collapse category
   const toggleCategory = (catId) => {
-    setExpanded(prev => {
-      const now = !prev[catId];
-      if (now && !requestors[catId]) loadRequestors(catId);
-      return { ...prev, [catId]: now };
+    setExpanded((prev) => {
+      const isNowExpanded = !prev[catId];
+      if (isNowExpanded && !requestors[catId]) {
+        loadRequestors(catId);
+      }
+      return { ...prev, [catId]: isNowExpanded };
     });
   };
 
-  // Requestor inline edit handlers
-  const onEditClick = (id) => setEditMode(prev => ({ ...prev, [id]: true }));
-  const onCancelEdit = (id) => setEditMode(prev => ({ ...prev, [id]: false }));
-  const onSaveEdit = (catId, id) => { loadRequestors(catId); setEditMode(prev => ({ ...prev, [id]: false })); };
+  useEffect(() => {
+    loadCategories();
+  }, []);
 
-  // Category inline edit handlers
-  const onCategoryEditClick = (id) => setCategoryEditMode(prev => ({ ...prev, [id]: true }));
-  const onCategoryCancelEdit = (id) => setCategoryEditMode(prev => ({ ...prev, [id]: false }));
-  const onCategorySaveEdit = (id) => { loadCategories(); setCategoryEditMode(prev => ({ ...prev, [id]: false })); };
+  // Auto-refresh when imports or bulk changes happen
+  useEffect(() => {
+    const onDbChanged = () => loadCategories();
+    window.addEventListener('db:changed', onDbChanged);
+    return () => window.removeEventListener('db:changed', onDbChanged);
+  }, []);
 
-  // Initial load
-  useEffect(() => { loadCategories(); }, []);
-
-  // Refresh categories (and their requestors) when DB changes (e.g., after import)
-useEffect(() => {
-  const onDbChanged = () => loadCategories();
-  window.addEventListener('db:changed', onDbChanged);
-  return () => window.removeEventListener('db:changed', onDbChanged);
-}, []); // mount once, cleanup on unmount
-
+  // ----- add form handlers (sticky panel controlled by FAB) -----
+  const handleAddSuccess = async () => {
+    await loadCategories();
+    setShowAddForm(false);
+  };
+  const handleAddCancel = () => setShowAddForm(false);
 
   return (
-    <div className="p-4 pb-24">
+    <div className="relative p-4 pb-24 overflow-y-auto">
+      {/* Sticky Add Category panel (revealed by FAB) */}
+      {showAddForm && (
+        <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-700 rounded-b-lg shadow-lg -mx-4 px-4 pt-4 pb-3">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold text-white">Add Category</h2>
+              <button
+                onClick={handleAddCancel}
+                className="px-2 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+                title="Minimize"
+              >
+                Minimize
+              </button>
+            </div>
+            {/* Same CategoryForm, but now shown inside the sticky panel */}
+            <CategoryForm onSuccess={handleAddSuccess} />
+          </div>
+        </div>
+      )}
+
+      {/* Page title */}
       <h2 className="text-2xl font-bold mb-4">Categories</h2>
 
-      {/* Add Category Form */}
-      <CategoryForm onSuccess={loadCategories} />
+      {/* Loading/empty states */}
+      {loading && <p className="text-gray-400">Loading categories...</p>}
+      {!loading && categories.length === 0 && (
+        <p className="text-gray-400">No categories available. Tap + to add one.</p>
+      )}
 
-      {/* Loading indicator */}
-      {loading && <p>Loading categories...</p>}
-
-      {/* Empty state */}
-      {!loading && categories.length === 0 && <p className="text-gray-400">No categories. Add one above.</p>}
-
-      {/* Categories List */}
+      {/* Category list */}
       {!loading && categories.length > 0 && (
         <ul className="space-y-4">
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <li key={cat.id} className="bg-gray-800 rounded-lg shadow-md">
-
-              {/* Category header or edit form */}
-              {categoryEditMode[cat.id] ? (
-                <CategoryEditForm
-                  category={cat}
-                  onCancel={() => onCategoryCancelEdit(cat.id)}
-                  onSuccess={() => onCategorySaveEdit(cat.id)}
-                />
-              ) : (
-                <div className="flex justify-between items-center p-4">
-                  <button
-                    onClick={() => toggleCategory(cat.id)}
-                    className="flex-1 text-left"
-                  >
-                    <h3 className="font-semibold text-lg text-white">{cat.name}</h3>
-                    <p className="text-gray-400 text-sm">{cat.description}</p>
-                  </button>
-                  <button
-                    onClick={() => onCategoryEditClick(cat.id)}
-                    className="ml-2 text-yellow-400 text-sm"
-                  >Edit
-                  </button>
+              {/* Non-editable header here; edit happens on the requestor side or a dedicated edit form */}
+              <button
+                onClick={() => toggleCategory(cat.id)}
+                className="w-full text-left p-4 flex justify-between items-center"
+              >
+                <div>
+                  <h3 className="font-semibold text-lg text-white">{cat.name}</h3>
+                  <p className="text-gray-400 text-sm">{cat.description}</p>
                 </div>
-              )}
+                <span className="text-white text-xl">
+                  {expanded[cat.id] ? '▾' : '▸'}
+                </span>
+              </button>
 
-              {/* Requestor panel (only when category header is expanded and not editing category) */}
-              {expanded[cat.id] && !categoryEditMode[cat.id] && (
+              {/* Expanded panel: add requestor & list requestors */}
+              {expanded[cat.id] && (
                 <div className="p-4 border-t border-gray-700">
-                  {/* Add Requestor Form */}
-                  <RequestorForm categoryId={cat.id} onSuccess={() => loadRequestors(cat.id)} />
+                  {/* Add requestor under this category */}
+                  <RequestorForm
+                    categoryId={cat.id}
+                    onSuccess={() => loadRequestors(cat.id)}
+                  />
 
-                  {/* Requestors List */}
+                  {/* Requestors list */}
                   {requestors[cat.id] && requestors[cat.id].length > 0 ? (
                     <ul className="mt-3 space-y-2">
-                      {requestors[cat.id].map(r => (
-                        <li key={r.id} className="bg-gray-700 p-3 rounded hover:bg-gray-600">
-                          {editMode[r.id] ? (
-                            <RequestorEditForm
-                              requestor={r}
-                              onCancel={() => onCancelEdit(r.id)}
-                              onSuccess={() => onSaveEdit(cat.id, r.id)}
-                            />
-                          ) : (
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <p className="text-white font-medium">{r.name}</p>
-                                <p className="text-gray-300 text-sm">{r.description}</p>
-                              </div>
-                              <button
-                                onClick={() => onEditClick(r.id)}
-                                className="text-blue-400 text-sm"
-                              >Edit</button>
-                            </div>
-                          )}
+                      {requestors[cat.id].map((r) => (
+                        <li
+                          key={r.id}
+                          className="bg-gray-700 p-3 rounded hover:bg-gray-600"
+                        >
+                          <p className="text-white font-medium">{r.name}</p>
+                          <p className="text-gray-300 text-sm">{r.description}</p>
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-gray-400 mt-2">No requestors yet.</p>
+                    <p className="text-gray-400 mt-2">No requestors added yet.</p>
                   )}
                 </div>
               )}
-
             </li>
           ))}
         </ul>
       )}
-      {/* Backup & Restore section */}
-<BackupRestorePanel />
+
+      {/* Floating Action Button (Add Category) */}
+      {!showAddForm && (
+        <button
+          onClick={() => setShowAddForm(true)}
+          className="
+            fixed bottom-20 right-5 z-40
+            w-14 h-14 rounded-full
+            bg-yellow-500 text-black
+            shadow-lg hover:bg-yellow-600
+            flex items-center justify-center
+            focus:outline-none focus:ring-4 focus:ring-yellow-300
+          "
+          aria-label="Add category"
+          title="Add category"
+        >
+          {/* Plus icon */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-7 h-7"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
