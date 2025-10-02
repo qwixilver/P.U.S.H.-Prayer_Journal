@@ -39,3 +39,16 @@ export function emitDbChanged() {
 export function getPrayersByStatus(status) {
   return db.prayers.where('status').equals(status).toArray();
 }
+
+// --- ADD THIS (append to src/db.js) ---
+// Small helper so code that imports { dbReady } keeps working.
+// It simply ensures the Dexie connection is open, then returns the db.
+export async function dbReady() {
+  try {
+    await db.open(); // Dexie queues ops until open; this makes it explicit.
+  } catch (e) {
+    // Swallow open errors here; calling code should handle real ops failures.
+    console.warn('dbReady(): open() warning', e);
+  }
+  return db;
+}
