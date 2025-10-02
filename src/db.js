@@ -1,39 +1,52 @@
 // src/db.js
-// Dexie (IndexedDB) database setup for the Prayer Journal.
-// This file now includes a new `events` table used to record dated notes on a prayer.
-//
-// IMPORTANT: Versioning
-// - We bump the Dexie version to add the `events` table without breaking existing data.
-// - If you already had versions (e.g., version(1) ... version(2) ...), keep them and
-//   append a new .version(N).stores({...}) with only the new table OR an expanded schema.
-// - Below is a consolidated, safe version that defines all current tables and indices.
+// Central Dexie (IndexedDB) setup for the Prayer Journal.
+// - Preserves existing tables (categories, requestors, prayers)
+// - Adds `events` table for per-prayer timelines
+// - Restores helper: getPrayersByStatus(status)
+// - Emits `db:changed` events for UI auto-refresh
 
 import Dexie from 'dexie';
 
 export const db = new Dexie('prayer_journal_db');
 
-// Bump version number compared to your previous value.
-// If your current code already had version(1), version(2), etc.
-// set this to `version(3)` or the next integer. If you’re unsure,
-// using a higher integer is safe; Dexie will handle the upgrade.
-db.version(3).stores({
-  // Categories: include showSingle (1/0) flag
-  categories: '++id, name',
+/**
+ * IMPORTANT: Versioning
+ * - Bump this version number above whatever you used previously so Dexie upgrades in place.
+ * - This definition is additive/non-destructive (no table removals or key changes).
+ * - If your project already has a higher version than 4, increase the number here accordingly.
+ */
+db.version(4).stores({
+  // Category of requestors; showSingle determines eligibility for "Single" view
+  // Indexed by 'name' for quick lookups; 'showSingle' is stored as 0/1 or boolean
+  categories: '++id, name, showSingle',
 
-  // Requestors: each tied to a category via categoryId
+  // People who made requests, each tied to a category
   requestors: '++id, categoryId, name',
 
-  // Prayers: each tied to a requestor via requestorId
-  // Index on requestorId and requestedAt for sorting/filtering
+  // Prayers tied to a requestor
+  // Indexes: requestorId (join), requestedAt (sort), status (filter), security (filter)
   prayers: '++id, requestorId, requestedAt, status, security',
 
-  // NEW: Events (timeline entries) for a prayer
-  // - `prayerId` lets us query all events for one prayer
-  // - `createdAt` (ISO string) lets us sort chronologically
+  // NEW: timeline events for a prayer
+  // Indexes: prayerId (filter), createdAt (sort)
   events: '++id, prayerId, createdAt',
 });
 
-// Optional: lightweight helper to broadcast "db:changed" to refresh UI everywhere
+/**
+ * Broadcast a lightweight "db changed" signal so views can reload themselves
+ * without manual wiring. We already listen for this in multiple components.
+ */
 export function emitDbChanged() {
   window.dispatchEvent(new Event('db:changed'));
+}
+
+/**
+ * Retrieves all prayers matching a specific status.
+ * @param {'requested'|'answered'} status
+ * @returns {Promise<Array>} Array of prayer objects with that status
+ *
+ * NOTE: We index 'status' in the schema above so this is efficient.
+ */
+export function getPrayersByStatus(status) {
+  return db.prayers.where('status').equals(status).toArray();
 }
