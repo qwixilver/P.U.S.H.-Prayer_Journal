@@ -1,197 +1,234 @@
 // src/components/CategoryEditForm.jsx
+// Defensive, self-loading edit form for a Category.
+// Fixes crash when the component renders before the category is fetched.
+// Props:
+//   - categoryId   (required): number ID of the category to edit
+//   - onCancel     (optional): function -> void
+//   - onSuccess    (optional): function -> void (called after successful save/delete)
+//
+// Behavior:
+//   - Loads the category by ID on mount.
+//   - If not found: shows a friendly message + Cancel button.
+//   - Save validates name, updates category, and emits a 'db:changed' event.
+//   - Delete refuses to run if category still has requestors; warns clearly.
+//   - "Include in Single View" maps to boolean persisted as 1/0 in IndexedDB.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { db } from '../db';
 
-/**
- * CategoryEditForm
- *
- * A form for editing an existing category.
- * Includes Save, Cancel, and Delete buttons.
- *
- * Deleting will also remove all requestors (and their prayers)
- * within this category. If any requestors exist, a warning
- * dialog will show the count before deletion.
- *
- * Props:
- * - category: {
- *     id,
- *     name,
- *     description,
- *     showSingle
- *   }
- * - onCancel: () => void        // Called when the user clicks “Cancel”
- * - onSuccess: () => void       // Called after successful save or delete
- */
-export default function CategoryEditForm({ category, onCancel, onSuccess }) {
-  // Initialize form state from the passed-in category object
-  const [name, setName] = useState(category.name);
-  const [description, setDescription] = useState(category.description || '');
-  const [showSingle, setShowSingle] = useState(Boolean(category.showSingle));
-  const [error, setError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
+  // Loading / error state for the record fetch
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
-  /**
-   * handleSave
-   *
-   * Updates this category in IndexedDB, then calls onSuccess()
-   * so the parent list can reload and exit edit mode.
-   */
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setError(null);
+  // Form fields — initialized AFTER we fetch the category
+  const [name, setName] = useState('');                 // category.name
+  const [description, setDescription] = useState('');   // category.description
+  const [showSingle, setShowSingle] = useState(false);  // category.showSingle (store as 1/0)
 
-    // Basic validation
+  // Submission state / feedback
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  // --- Load the category on mount / when categoryId changes ---
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setLoading(true);
+      setLoadError('');
+      setMessage('');
+      try {
+        const cat = await db.categories.get(categoryId);
+        if (!alive) return;
+
+        if (!cat) {
+          setLoadError('Category not found.');
+          setLoading(false);
+          return;
+        }
+
+        // Initialize form fields defensively
+        setName(cat.name || '');
+        setDescription(cat.description || '');
+        setShowSingle(Boolean(cat.showSingle));
+      } catch (err) {
+        console.error('CategoryEditForm: load error', err);
+        if (alive) setLoadError('Failed to load category.');
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    if (categoryId == null) {
+      setLoadError('No category specified.');
+      setLoading(false);
+    } else {
+      load();
+    }
+    return () => { alive = false; };
+  }, [categoryId]);
+
+  // --- Save handler ---
+  async function handleSave(e) {
+    e?.preventDefault?.();
+    setMessage('');
     if (!name.trim()) {
-      setError('Category name cannot be empty.');
+      setMessage('Name is required.');
       return;
     }
-
-    setSubmitting(true);
     try {
-      await db.categories.put({
-        id: category.id,
+      setBusy(true);
+      await db.categories.update(categoryId, {
         name: name.trim(),
         description: description.trim(),
         showSingle: showSingle ? 1 : 0,
       });
 
-      // Notify parent to reload and close edit mode
-      onSuccess();
+      // Notify rest of app
+      window.dispatchEvent(new Event('db:changed'));
+
+      setMessage('Saved.');
+      if (typeof onSuccess === 'function') onSuccess();
     } catch (err) {
-      console.error('Error saving category:', err);
-      setError('Failed to save changes. Check console for details.');
+      console.error('CategoryEditForm: save error', err);
+      setMessage('Save failed (see console).');
+    } finally {
+      setBusy(false);
     }
-    setSubmitting(false);
-  };
+  }
 
-  /**
-   * handleDelete
-   *
-   * 1. Counts requestors in this category.
-   * 2. Warns the user if any exist (showing the count).
-   * 3. Deletes all prayers for those requestors.
-   * 4. Deletes the requestors.
-   * 5. Deletes the category itself.
-   * 6. Calls onSuccess().
-   */
-  const handleDelete = async () => {
-    // Count how many requestors remain
-    const count = await db.requestors
-      .where('categoryId')
-      .equals(category.id)
-      .count();
-
-    // Build a warning message
-    let message = `Are you sure you want to delete the category "${category.name}"?`;
-    if (count > 0) {
-      message += `\n\nThis will also delete ${count} requestor${count > 1 ? 's' : ''} and all their prayers.`;
-    }
-
-    // Confirm with the user
-    if (!window.confirm(message)) {
-      return;
-    }
-
-    setSubmitting(true);
+  // --- Delete handler ---
+  async function handleDelete() {
+    setMessage('');
     try {
+      // Count requestors in this category
+      const count = await db.requestors.where('categoryId').equals(categoryId).count();
       if (count > 0) {
-        // Delete prayers for each requestor in this category
-        const reqs = await db.requestors
-          .where('categoryId')
-          .equals(category.id)
-          .toArray();
-        const reqIds = reqs.map((r) => r.id);
-
-        // Bulk delete prayers whose requestorId is in reqIds
-        await db.prayers
-          .where('requestorId')
-          .anyOf(reqIds)
-          .delete();
-
-        // Delete the requestors themselves
-        await db.requestors
-          .where('categoryId')
-          .equals(category.id)
-          .delete();
+        alert(
+          `This category still has ${count} requestor(s).\n\n` +
+          `For safety, delete or move those requestors first before deleting the category.`
+        );
+        return;
       }
 
-      // Finally delete the category
-      await db.categories.delete(category.id);
+      const yes = confirm('Delete this category? This cannot be undone.');
+      if (!yes) return;
 
-      // Notify parent to reload and close edit mode
-      onSuccess();
+      setBusy(true);
+      await db.categories.delete(categoryId);
+
+      // Notify rest of app
+      window.dispatchEvent(new Event('db:changed'));
+
+      setMessage('Category deleted.');
+      if (typeof onSuccess === 'function') onSuccess();
     } catch (err) {
-      console.error('Error deleting category:', err);
-      setError('Failed to delete category. Check console for details.');
+      console.error('CategoryEditForm: delete error', err);
+      setMessage('Delete failed (see console).');
+    } finally {
+      setBusy(false);
     }
-    setSubmitting(false);
-  };
+  }
 
+  // --- Render states ---
+  if (loading) {
+    return (
+      <div className="p-4 bg-gray-700 rounded">
+        <p className="text-gray-200">Loading category…</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-4 bg-gray-700 rounded">
+        <p className="text-red-300">{loadError}</p>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Main form ---
   return (
-    <form onSubmit={handleSave} className="space-y-4 p-4 bg-gray-800 rounded-lg mb-2">
-      <h4 className="text-white font-semibold">Edit Category</h4>
+    <form
+      onSubmit={handleSave}
+      className="p-4 bg-gray-700 rounded"
+    >
+      <h4 className="text-white font-semibold mb-3">Edit Category</h4>
 
       {/* Name */}
-      <div>
-        <label className="block text-gray-300">Name</label>
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Name</label>
         <input
           type="text"
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="e.g., Family, Urgent"
         />
       </div>
 
       {/* Description */}
-      <div>
-        <label className="block text-gray-300">Description</label>
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Description</label>
         <textarea
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Short description for this category"
         />
       </div>
 
-      {/* Show in Single View toggle */}
-      <label className="inline-flex items-center text-gray-300">
+      {/* Include in Single View */}
+      <div className="flex items-center mb-3">
         <input
+          id="showSingle"
           type="checkbox"
-          className="form-checkbox h-5 w-5 text-yellow-400"
           checked={showSingle}
           onChange={(e) => setShowSingle(e.target.checked)}
+          className="mr-2"
         />
-        <span className="ml-2">Include in Single View</span>
-      </label>
+        <label htmlFor="showSingle" className="text-gray-200 text-sm">
+          Include in “Single View”
+        </label>
+      </div>
 
-      {/* Error message */}
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {/* Status line */}
+      {message && <p className="text-gray-200 text-sm mb-2">{message}</p>}
 
-      {/* Action Buttons */}
-      <div className="flex space-x-2">
-        {/* Save */}
+      {/* Actions */}
+      <div className="flex flex-wrap gap-2">
         <button
           type="submit"
-          disabled={submitting}
-          className="px-4 py-2 bg-yellow-500 text-black rounded hover:bg-yellow-600 disabled:opacity-50 font-semibold"
+          disabled={busy}
+          className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
         >
-          {submitting ? 'Saving...' : 'Save'}
+          {busy ? 'Saving…' : 'Save'}
         </button>
 
-        {/* Cancel */}
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500"
+          className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+          disabled={busy}
         >
           Cancel
         </button>
 
-        {/* Delete */}
         <button
           type="button"
           onClick={handleDelete}
-          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-500"
+          className="ml-auto px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+          disabled={busy}
+          title="Delete this category (only if it has no requestors)"
         >
           Delete
         </button>
