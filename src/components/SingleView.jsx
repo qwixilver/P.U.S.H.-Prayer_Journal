@@ -1,16 +1,16 @@
 // src/components/SingleView.jsx
-// Single-card view:
-// - If `initialPrayerId` is provided, loads that specific prayer.
-// - Otherwise picks a random requested prayer, preferring categories with showSingle=true,
-//   with a fallback to all requested.
-// - Card is sized with a safe maxHeight so the "Next" button is always reachable.
+// Adds an Event timeline + inline add-event form below the prayer details.
+// Preserves all existing behavior (random/targeted prayer, Next button, sizing, hints).
 
 import React, { useEffect, useState } from 'react';
 import { db } from '../db';
+import PrayerEventList from './PrayerEventList';
+import PrayerEventForm from './PrayerEventForm';
 
 export default function SingleView({ initialPrayerId = null }) {
   const [prayer, setPrayer] = useState(null);
   const [hint, setHint] = useState('');
+  const [showAddEvent, setShowAddEvent] = useState(false);
 
   const normStatus = (s) =>
     String(s || '').toLowerCase() === 'answered' ? 'answered' : 'requested';
@@ -73,7 +73,6 @@ export default function SingleView({ initialPrayerId = null }) {
     }
   };
 
-  // React to targeted id vs random
   useEffect(() => {
     if (initialPrayerId != null) {
       loadPrayerById(initialPrayerId);
@@ -82,7 +81,6 @@ export default function SingleView({ initialPrayerId = null }) {
     }
   }, [initialPrayerId]);
 
-  // Refresh when DB changes (e.g. after imports)
   useEffect(() => {
     const onDbChanged = () => {
       if (initialPrayerId != null) {
@@ -117,9 +115,10 @@ export default function SingleView({ initialPrayerId = null }) {
           w-full max-w-xl mx-auto bg-gray-800 rounded-lg shadow-lg overflow-hidden
           grid grid-rows-[auto_1fr_auto]
         "
-        style={{ maxHeight: 'calc(100vh - 160px)' }} // room for headers + bottom nav
+        style={{ maxHeight: 'calc(100vh - 160px)' }}
       >
-        <div className="p-6">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-700">
           <h2 className="text-2xl font-bold text-white mb-2">{prayer.name}</h2>
           <div className="text-gray-400 text-sm space-y-1">
             <p>
@@ -137,14 +136,46 @@ export default function SingleView({ initialPrayerId = null }) {
           </div>
         </div>
 
-        <div className="overflow-y-auto px-6 text-gray-200">
+        {/* Scrollable content (description + timeline) */}
+        <div className="overflow-y-auto px-6 py-4 space-y-4">
+          {/* Description */}
           {prayer.description ? (
-            <p className="whitespace-pre-wrap">{prayer.description}</p>
+            <div>
+              <h5 className="text-white font-semibold mb-1">Details</h5>
+              <p className="text-gray-200 whitespace-pre-wrap">{prayer.description}</p>
+            </div>
           ) : (
-            <p className="text-gray-500 italic">(No additional details.)</p>
+            <div>
+              <h5 className="text-white font-semibold mb-1">Details</h5>
+              <p className="text-gray-500 italic">(No additional details.)</p>
+            </div>
           )}
+
+          {/* Timeline header + toggle add form */}
+          <div className="flex items-center justify-between">
+            <h5 className="text-white font-semibold">Timeline</h5>
+            <button
+              onClick={() => setShowAddEvent((s) => !s)}
+              className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+            >
+              {showAddEvent ? 'Close' : 'Add Event'}
+            </button>
+          </div>
+
+          {/* Add event (collapsible) */}
+          {showAddEvent && (
+            <PrayerEventForm
+              prayerId={prayer.id}
+              onSuccess={() => setShowAddEvent(false)}
+              onCancel={() => setShowAddEvent(false)}
+            />
+          )}
+
+          {/* Timeline list */}
+          <PrayerEventList prayerId={prayer.id} />
         </div>
 
+        {/* Next button */}
         <button
           onClick={loadRandomPrayer}
           className="m-4 px-8 py-3 bg-yellow-500 text-black rounded-lg font-semibold hover:bg-yellow-600 justify-self-start"

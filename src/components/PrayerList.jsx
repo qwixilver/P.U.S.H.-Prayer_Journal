@@ -1,21 +1,14 @@
 // src/components/PrayerList.jsx
-// Daily/Security list grouped into Category sections.
-// - Non-editable Category headers for readability when many prayers exist.
-// - Preserves: FAB (add form), inline expand/collapse, "Open in Single", Edit.
-// - Works for both viewType="daily" and viewType="security".
-//
-// Grouping rules:
-// - Category is taken from the prayer's requestor.categoryId.
-// - Missing category renders under an "Uncategorized" section.
-// - Categories are sorted alphabetically by name (can change easily).
-//
-// Layout:
-// - Top-level wrapper uses overflow-y-auto + pb-24 so nothing hides under BottomNav.
+// Adds a per-prayer timeline (events) inside the EXPANDED card for Daily/Security.
+// When a card is expanded, users can view the timeline and add new events.
+// All previous features (FAB, edit, open-in-single, category grouping, etc.) are preserved.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
 import PrayerForm from './PrayerForm';
 import PrayerEditForm from './PrayerEditForm';
+import PrayerEventList from './PrayerEventList';
+import PrayerEventForm from './PrayerEventForm';
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -33,6 +26,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   // Per-item UI state
   const [editing, setEditing] = useState({});
   const [expanded, setExpanded] = useState({});
+  const [addingEvent, setAddingEvent] = useState({}); // { [prayerId]: boolean }
 
   // Add form visibility (FAB opens it)
   const [showAddForm, setShowAddForm] = useState(false);
@@ -87,29 +81,18 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   }, []);
 
   // -------- Grouping into sections --------
-  // Build: [{ categoryId, categoryName, items: [...] }, ...]
   const sections = useMemo(() => {
-    // Bucket by categoryId (including undefined/null)
     const buckets = new Map();
-
     for (const p of prayers) {
       const catId = p.category?.id ?? null;
       const catName = (p.category?.name || 'Uncategorized').trim() || 'Uncategorized';
-
       if (!buckets.has(catId)) {
-        buckets.set(catId, {
-          categoryId: catId,
-          categoryName: catName,
-          items: [],
-        });
+        buckets.set(catId, { categoryId: catId, categoryName: catName, items: [] });
       }
       buckets.get(catId).items.push(p);
     }
-
-    // To keep UX predictable, sort categories alphabetically by name
     const list = Array.from(buckets.values());
     list.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
-
     return list;
   }, [prayers]);
 
@@ -122,18 +105,21 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
 
   const toggleEdit = (id, on) => setEditing((prev) => ({ ...prev, [id]: on }));
   const toggleExpand = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggleAddEvent = (id) => setAddingEvent((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const showFab = useMemo(() => !showAddForm, [showAddForm]);
 
   // -------- Render --------
   return (
     <div className="relative overflow-y-auto p-4 pb-24">
-      {/* Sticky Add Form (revealed by FAB) */}
+      {/* Sticky Add Prayer (revealed by FAB) */}
       {showAddForm && (
         <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur border-b border-gray-700 rounded-b-lg shadow-lg -mx-4 px-4 pt-4 pb-3">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-semibold text-white">Add Prayer</h2>
+              <h2 className="text-lg font-semibold text-white">
+                {viewType === 'security' ? 'Add Security Prayer' : 'Add Prayer'}
+              </h2>
               <button
                 onClick={handleAddCancel}
                 className="px-2 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
@@ -152,7 +138,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
       </h2>
 
       {loading && <p className="text-gray-400">Loading…</p>}
-      {!loading && prayers.length === 0 && (
+      {!loading && sections.length === 0 && (
         <p className="text-gray-400">No prayers to display.</p>
       )}
 
@@ -161,18 +147,17 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
         <div className="space-y-6">
           {sections.map((section) => (
             <section key={section.categoryId ?? 'uncat'}>
-              {/* NON-EDITABLE Category header */}
               <div className="sticky top-0 -mx-4 px-4 py-2 bg-gray-900/95 backdrop-blur border-b border-gray-800 z-10">
                 <h3 className="text-lg font-semibold text-yellow-300">
                   {section.categoryName}
                 </h3>
               </div>
 
-              {/* Items in this category */}
               <ul className="mt-2 space-y-3">
                 {section.items.map((p) => {
                   const isEditing = !!editing[p.id];
                   const isExpanded = !!expanded[p.id];
+                  const isAddingEvent = !!addingEvent[p.id];
 
                   return (
                     <li key={p.id} className="bg-gray-800 rounded-lg p-3 shadow">
@@ -187,7 +172,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
                         />
                       ) : (
                         <>
-                          {/* Card header: click to expand; buttons stop propagation */}
+                          {/* Header row */}
                           <div
                             className="flex items-start justify-between cursor-pointer select-none"
                             onClick={() => toggleExpand(p.id)}
@@ -196,7 +181,6 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
                               <h4 className="text-white font-semibold">{p.name}</h4>
                               <div className="text-gray-400 text-sm space-x-2">
                                 <span>{p.requestor?.name || 'Unknown'}</span>
-                                {/* We *do not* show category here, the section already indicates it */}
                                 {p.requestedAt && (
                                   <>
                                     <span>•</span>
@@ -237,17 +221,49 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
                             </div>
                           </div>
 
+                          {/* Collapsed body (teaser) */}
                           {p.description && !isExpanded && (
                             <p className="mt-2 text-gray-200 line-clamp-3 whitespace-pre-wrap">
                               {p.description}
                             </p>
                           )}
+
+                          {/* Expanded body with timeline */}
                           {isExpanded && (
-                            <div className="mt-3 text-gray-200 space-y-2">
-                              <p className="whitespace-pre-wrap">
-                                {p.description || '(No additional details.)'}
-                              </p>
-                              <div className="text-xs text-gray-400">Tap card to collapse.</div>
+                            <div className="mt-3 text-gray-200 space-y-3">
+                              {/* Full description */}
+                              <div>
+                                <h5 className="text-white font-semibold mb-1">Details</h5>
+                                <p className="whitespace-pre-wrap">
+                                  {p.description || '(No additional details.)'}
+                                </p>
+                              </div>
+
+                              {/* Timeline header + toggle add form */}
+                              <div className="flex items-center justify-between">
+                                <h5 className="text-white font-semibold">Timeline</h5>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleAddEvent(p.id);
+                                  }}
+                                  className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+                                >
+                                  {isAddingEvent ? 'Close' : 'Add Event'}
+                                </button>
+                              </div>
+
+                              {/* Add Event form */}
+                              {isAddingEvent && (
+                                <PrayerEventForm
+                                  prayerId={p.id}
+                                  onSuccess={() => toggleAddEvent(p.id)}
+                                  onCancel={() => toggleAddEvent(p.id)}
+                                />
+                              )}
+
+                              {/* Timeline list */}
+                              <PrayerEventList prayerId={p.id} compact />
                             </div>
                           )}
                         </>
