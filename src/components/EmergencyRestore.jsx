@@ -1,17 +1,18 @@
 // src/components/EmergencyRestore.jsx
-// Emergency import/export JSON overlay, triggered via URL hash "#restore".
-// Accepts BOTH top-level and nested ("data") backup shapes and shows counts before import.
+// Accepts BOTH top-level and nested ("data") backup shapes.
+// Now also includes journalEntries (optional).
 
 import React, { useRef, useState } from 'react';
 import { db, emitDbChanged } from '../db';
 
 function extractTables(parsed) {
   const root = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
-  const categories = Array.isArray(root?.categories) ? root.categories : [];
-  const requestors = Array.isArray(root?.requestors) ? root.requestors : [];
-  const prayers    = Array.isArray(root?.prayers)    ? root.prayers    : [];
-  const events     = Array.isArray(root?.events)     ? root.events     : [];
-  return { categories, requestors, prayers, events };
+  const categories    = Array.isArray(root?.categories)    ? root.categories    : [];
+  const requestors    = Array.isArray(root?.requestors)    ? root.requestors    : [];
+  const prayers       = Array.isArray(root?.prayers)       ? root.prayers       : [];
+  const events        = Array.isArray(root?.events)        ? root.events        : [];
+  const journalEntries= Array.isArray(root?.journalEntries)? root.journalEntries: [];
+  return { categories, requestors, prayers, events, journalEntries };
 }
 
 export default function EmergencyRestore({ onClose }) {
@@ -25,16 +26,20 @@ export default function EmergencyRestore({ onClose }) {
       setBusy(true);
       setMsg('');
       setPreview(null);
-      const [categories, requestors, prayers, events] = await Promise.all([
+
+      const [categories, requestors, prayers, events, journalEntries] = await Promise.all([
         db.categories.toArray(),
         db.requestors.toArray(),
         db.prayers.toArray(),
         db.events?.toArray?.() ?? [],
+        db.journalEntries?.toArray?.() ?? [],
       ]);
+
       const payload = {
-        meta: { type: 'prayer-journal-backup', version: 1, exportedAt: new Date().toISOString() },
-        data: { categories, requestors, prayers, events },
+        meta: { type: 'prayer-journal-backup', version: 2, exportedAt: new Date().toISOString() },
+        data: { categories, requestors, prayers, events, journalEntries },
       };
+
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -43,6 +48,7 @@ export default function EmergencyRestore({ onClose }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(a.href);
+
       setMsg('Exported backup JSON.');
     } catch (e) {
       console.error('Export failed', e);
@@ -60,14 +66,15 @@ export default function EmergencyRestore({ onClose }) {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      const { categories, requestors, prayers, events } = extractTables(parsed);
+      const { categories, requestors, prayers, events, journalEntries } = extractTables(parsed);
       const totals = {
         categories: categories.length,
         requestors: requestors.length,
         prayers: prayers.length,
         events: events.length,
+        journalEntries: journalEntries.length,
       };
-      const total = totals.categories + totals.requestors + totals.prayers + totals.events;
+      const total = Object.values(totals).reduce((a, b) => a + b, 0);
       if (total === 0) {
         setMsg('Import file parsed, but contains zero rows. Is this the right backup?');
         setBusy(false);
@@ -90,25 +97,36 @@ export default function EmergencyRestore({ onClose }) {
     try {
       const text = await fileRef.current.files[0].text();
       const parsed = JSON.parse(text);
-      const { categories, requestors, prayers, events } = extractTables(parsed);
+      const { categories, requestors, prayers, events, journalEntries } = extractTables(parsed);
 
-      await db.transaction('rw', db.categories, db.requestors, db.prayers, db.events, async () => {
-        await Promise.all([
-          db.categories.clear(),
-          db.requestors.clear(),
-          db.prayers.clear(),
-          db.events.clear().catch(() => {}),
-        ]);
-        if (categories.length) await db.categories.bulkAdd(categories);
-        if (requestors.length) await db.requestors.bulkAdd(requestors);
-        if (prayers.length)    await db.prayers.bulkAdd(prayers);
-        if (events.length && db.events) await db.events.bulkAdd(events);
-      });
+      await db.transaction(
+        'rw',
+        db.categories,
+        db.requestors,
+        db.prayers,
+        db.events,
+        db.journalEntries,
+        async () => {
+          await Promise.all([
+            db.categories.clear(),
+            db.requestors.clear(),
+            db.prayers.clear(),
+            db.events.clear().catch(() => {}),
+            db.journalEntries.clear().catch(() => {}),
+          ]);
+
+          if (categories.length)     await db.categories.bulkAdd(categories);
+          if (requestors.length)     await db.requestors.bulkAdd(requestors);
+          if (prayers.length)        await db.prayers.bulkAdd(prayers);
+          if (events.length && db.events)             await db.events.bulkAdd(events);
+          if (journalEntries.length && db.journalEntries) await db.journalEntries.bulkAdd(journalEntries);
+        }
+      );
 
       emitDbChanged();
       setMsg(
         `Import complete: ${preview.categories} categories, ${preview.requestors} requestors, ` +
-        `${preview.prayers} prayers, ${preview.events} events.`
+        `${preview.prayers} prayers, ${preview.events} events, ${preview.journalEntries} journal entries.`
       );
 
       if (fileRef.current) fileRef.current.value = '';
@@ -139,6 +157,7 @@ export default function EmergencyRestore({ onClose }) {
         </p>
 
         <div className="space-y-4">
+          {/* Export */}
           <div className="bg-gray-700 rounded p-3">
             <div className="font-semibold mb-2">Export JSON</div>
             <button
@@ -150,6 +169,7 @@ export default function EmergencyRestore({ onClose }) {
             </button>
           </div>
 
+          {/* Import */}
           <div className="bg-gray-700 rounded p-3">
             <div className="font-semibold mb-2">Import JSON</div>
             <input
@@ -162,7 +182,7 @@ export default function EmergencyRestore({ onClose }) {
                          hover:file:bg-gray-500"
             />
             <p className="text-xs text-gray-300 mt-2">
-              Import will replace existing tables (categories, requestors, prayers, events).
+              Import will replace existing tables (categories, requestors, prayers, events, journal entries).
             </p>
 
             {preview && (
@@ -173,6 +193,7 @@ export default function EmergencyRestore({ onClose }) {
                   <li>Requestors: {preview.requestors}</li>
                   <li>Prayers: {preview.prayers}</li>
                   <li>Events: {preview.events}</li>
+                  <li>Journal Entries: {preview.journalEntries}</li>
                   <li>Total: {preview.total}</li>
                 </ul>
                 <button

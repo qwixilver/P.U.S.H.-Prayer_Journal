@@ -1,57 +1,56 @@
 // src/db.js
 // IndexedDB setup using Dexie.js for offline-first data storage.
-// Restores the original DB name ("PrayerJournalDB") so existing data reappears,
-// keeps your original indexes, and adds the new "events" table safely.
-//
-// Helpers preserved: emitDbChanged(), getPrayersByStatus(status), dbReady()
+// DB name intentionally remains "PrayerJournalDB" (so existing data persists).
+// This file adds a new "journalEntries" table in a safe, additive schema bump.
 
 import Dexie from 'dexie';
 
-// IMPORTANT: use the original name so we re-attach to existing data
+// Keep the original, known-good DB name so user data remains visible.
 export const db = new Dexie('PrayerJournalDB');
 
 /**
  * Schema
- * - This is additive to the last good version:
- *   * categories/requestors/prayers keep the same indexed fields you had
- *   * NEW: events table for per-prayer timeline entries
+ * - Existing tables (categories, requestors, prayers) unchanged.
+ * - "events" table retained (per-prayer timeline).
+ * - NEW: "journalEntries" for personal journaling (freeform notes).
  *
- * NOTE: If the previous deployed version was "version(1)", this bump to 2 is safe.
- * Dexie will perform a non-destructive upgrade (add table; keep data).
+ * Bump the version number by one compared to your current file.
+ * If your repo currently has version(2), use version(3). If it already uses 3, use 4, etc.
  */
-db.version(2).stores({
+db.version(3).stores({
   categories: '++id, name, description, showSingle',
   requestors: '++id, categoryId, name, description, security',
   prayers: '++id, requestorId, name, description, requestedAt, answeredAt, status, security',
-  events: '++id, prayerId, createdAt', // NEW: timeline entries
+  events: '++id, prayerId, createdAt', // timeline entries for prayers
+
+  // NEW: freeform personal journal
+  // Index createdAt for sorting; include title for future quick lookups.
+  journalEntries: '++id, title, createdAt, updatedAt',
 });
 
 /**
- * Lightweight broadcast so views auto-refresh without a reload.
- * Many components already listen for this (`window.addEventListener('db:changed', ...)`).
+ * Broadcast so views can refresh without a full reload.
+ * Many components listen for this: window.addEventListener('db:changed', ...)
  */
 export function emitDbChanged() {
   window.dispatchEvent(new Event('db:changed'));
 }
 
 /**
- * Retrieves all prayers matching a specific status.
- * @param {('requested'|'answered')} status
- * @returns {Promise<Array>} Array of prayer objects
+ * Existing helper used by lists.
  */
 export function getPrayersByStatus(status) {
   return db.prayers.where('status').equals(status).toArray();
 }
 
 /**
- * Small helper to satisfy `import { dbReady } from './db'` in src/index.jsx.
- * Ensures the Dexie connection is open, then returns the db.
+ * Keep this for src/index.jsx which may import it.
+ * Ensures Dexie is open; returns the db instance.
  */
 export async function dbReady() {
   try {
     await db.open();
   } catch (e) {
-    // If open throws (rare), we log and still return db so callers can handle actual ops.
     console.warn('dbReady(): open() warning', e);
   }
   return db;

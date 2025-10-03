@@ -1,9 +1,8 @@
 // src/components/BottomNav.jsx
-// Bottom tab bar: Daily, Single, Categories, Security
-// - Raised z-index so it stays above any content overlays
-// - Pointer-events explicitly enabled
+// Bottom tab bar: Daily, Single, Categories, Journal, Security
+// - High z-index so it stays above content
+// - Pointer-events enabled
 // - Preserves props: activeTab, onTabChange
-// - Accessible: aria-current, focus rings, safe-area spacer
 
 import React from 'react';
 
@@ -11,6 +10,7 @@ const TABS = [
   { key: 'daily', label: 'Daily', icon: '🗓️' },
   { key: 'single', label: 'Single', icon: '🎯' },
   { key: 'categories', label: 'Categories', icon: '📂' },
+  { key: 'journal', label: 'Journal', icon: '📓' },   // NEW
   { key: 'security', label: 'Security', icon: '🔒' },
 ];
 
@@ -25,8 +25,8 @@ export default function BottomNav({ activeTab, onTabChange }) {
       aria-label="Bottom Navigation"
       className="
         fixed bottom-0 inset-x-0
-        z-[9999]               /* >>> ensure clicks are not blocked by any content */
-        pointer-events-auto    /* >>> make absolutely sure we receive pointer events */
+        z-[9999]
+        pointer-events-auto
         bg-gray-900/95 backdrop-blur
         border-t border-gray-800
       "
@@ -47,16 +47,12 @@ export default function BottomNav({ activeTab, onTabChange }) {
                 active ? 'text-yellow-300' : 'text-gray-300 hover:text-white',
               ].join(' ')}
             >
-              <span className="text-base leading-none" aria-hidden="true">
-                {t.icon}
-              </span>
+              <span className="text-base leading-none" aria-hidden="true">{t.icon}</span>
               <span>{t.label}</span>
             </button>
           );
         })}
       </div>
-
-      {/* iOS safe-area pad to avoid home indicator overlap */}
       <div className="h-[env(safe-area-inset-bottom)]" />
     </nav>
   );
