@@ -1,5 +1,5 @@
 // src/App.jsx
-// Adds a Journal tab while preserving your existing layout and behavior.
+// Adds a Settings tab while preserving your existing layout and behavior.
 
 import React, { useEffect, useState } from 'react';
 import BottomNav from './components/BottomNav';
@@ -8,9 +8,10 @@ import SingleView from './components/SingleView';
 import CategoryList from './components/CategoryList';
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencyRestore from './components/EmergencyRestore';
+import JournalList from './components/JournalList';
 
 // NEW
-import JournalList from './components/JournalList';
+import Settings from './components/Settings';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('daily');
@@ -48,7 +49,8 @@ export default function App() {
             <PrayerList viewType="security" onOpenSingle={openInSingle} />
           )}
           {activeTab === 'categories' && <CategoryList />}
-          {activeTab === 'journal' && <JournalList />}{/* NEW */}
+          {activeTab === 'journal' && <JournalList />}
+          {activeTab === 'settings' && <Settings />}{/* NEW */}
           {activeTab === 'single' && (
             <SingleView initialPrayerId={singleTargetId} />
           )}

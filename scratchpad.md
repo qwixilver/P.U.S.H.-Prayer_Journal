@@ -2,19 +2,14 @@ Some notes on what I want to do:
 
 ### UI updates
 
-1. I want the 'daily' view to be segmented into it's respective categories. These categories should not be editable, but just denote which category the prayer entries are to be found in so that when there are lots of prayers, and/or categories, it's easier to follow. 
+1. I want the 'daily' view to group prayers not only by their category, but also by requestor. Categories should remain as large titles where they are right now, but requestor groupings should have smaller text denoting them, and should mostly be distinct because of the margin around the grouped container (likely <div>)
 
-1. I want to make the app more consistent by adding a floating action button (FAB) on the categories page to add new categories, just the way we did with the add new requestors button on the daily page
+1. I want to be able to edit requestor and category data for prayers that have already been setup... When I click the 'edit' button for any prayer, it should present me with the same options as adding a new prayer - in fact, we can use the same modal, just make sure all the fields are populated with data from the original prayer. Of course when saving the updates, we need to ensure the events table is preserved along with the prayer even if category and/or requestor have changed.
+
+1. The backup/restore panel was not ever restored to visibility while we were making changes and bugfixing for the events system. That's okay since I've been able to use the emergency restore panel we devised. However, I want the import panel to be restored and moved to a 'settings' page instead of on the categories page where it originally lived. I think that will make things a bit more intuitavie for the user.
 
 
 ### Feature updates
-
-1. I want an 'event' log system with the requests. Each request should be able to add an event from either the single view, or the expanded view on the daily tab This event log will allow users to record events as they happen regarding requests. This allows events to be listed in chronological order in the prayer request so that we have a timeline as the requests are being answered that will help us look back to see how God moved in particular situations...
-
-1. I want the import panel to be moved to a 'settings' page. I may want to expirement with where the settings page lives in the interface though. It might live in a side drawer, or it might live in a new tab along the bottom nav
-
-1. I want a new functional space for 'personal journaling' This will function much more like an actual journal where entries are more freeform, but the idea is that it will focus on your personal walk with God and your personal prayer life.
-
 
 ### Bugs
 

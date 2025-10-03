@@ -1,5 +1,5 @@
 // src/components/BottomNav.jsx
-// Bottom tab bar: Daily, Single, Categories, Journal, Security
+// Bottom tab bar: Daily, Single, Categories, Journal, Security, Settings
 // - High z-index so it stays above content
 // - Pointer-events enabled
 // - Preserves props: activeTab, onTabChange
@@ -7,11 +7,12 @@
 import React from 'react';
 
 const TABS = [
-  { key: 'daily', label: 'Daily', icon: '🗓️' },
-  { key: 'single', label: 'Single', icon: '🎯' },
+  { key: 'daily',      label: 'Daily',      icon: '🗓️' },
+  { key: 'single',     label: 'Single',     icon: '🎯' },
   { key: 'categories', label: 'Categories', icon: '📂' },
-  { key: 'journal', label: 'Journal', icon: '📓' },   // NEW
-  { key: 'security', label: 'Security', icon: '🔒' },
+  { key: 'journal',    label: 'Journal',    icon: '📓' },
+  { key: 'security',   label: 'Security',   icon: '🔒' },
+  { key: 'settings',   label: 'Settings',   icon: '⚙️' }, // NEW
 ];
 
 export default function BottomNav({ activeTab, onTabChange }) {
@@ -42,7 +43,7 @@ export default function BottomNav({ activeTab, onTabChange }) {
               aria-current={active ? 'page' : undefined}
               className={[
                 'flex-1 flex flex-col items-center justify-center gap-0.5 py-2',
-                'text-xs font-medium',
+                'text-[11px] sm:text-xs font-medium',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400',
                 active ? 'text-yellow-300' : 'text-gray-300 hover:text-white',
               ].join(' ')}
