@@ -1,198 +1,260 @@
 // src/components/PrayerForm.jsx
+// Unified form for CREATE and EDIT of prayers.
+// - If props.initialPrayer is provided, acts as EDIT; otherwise CREATE.
+// - Includes category -> requestor cascading select, title/description, dates, status, security.
+// - On submit (create): adds a new prayer.
+// - On submit (edit): updates the existing prayer by id (does NOT touch events).
+//
+// Props:
+//   initialPrayer?: {
+//     id, requestorId, name, description, requestedAt, answeredAt, status, security
+//   }
+//   onSuccess?: () => void
+//   onCancel?: () => void
+//
+// Notes:
+// - Fully compatible with existing "add" usage on the Daily tab (no props needed except onSuccess/onCancel).
+// - For EDIT, we pre-populate categoryId by looking up the prayer's requestor's category.
 
-import React, { useEffect, useState } from 'react';
-import { db } from '../db';
+import React, { useEffect, useMemo, useState } from 'react';
+import { db, emitDbChanged } from '../db';
 
-/**
- * A form to add a new prayer request.
- * First select a Category, then the Requestor dropdown
- * is populated with only those requestors in that category.
- *
- * @param {{ onSuccess: () => void }} props
- */
-export default function PrayerForm({ onSuccess }) {
-  // Loaded categories for the first dropdown
+export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
+  const isEdit = Boolean(initialPrayer?.id);
+
+  // Data sources
   const [categories, setCategories] = useState([]);
-  // Loaded requestors for the selected category
-  const [requestors, setRequestors] = useState([]);
+  const [allRequestors, setAllRequestors] = useState([]);
 
-  // Form field state
-  const [categoryId, setCategoryId] = useState('');
-  const [requestorId, setRequestorId] = useState('');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [requestedAt, setRequestedAt] = useState(new Date().toISOString().slice(0,10)); // yyyy-mm-dd
-  const [status, setStatus] = useState('requested');
-  const [security, setSecurity] = useState(false);
+  // Form state
+  const [categoryId, setCategoryId] = useState(null);
+  const [requestorId, setRequestorId] = useState(null);
+  const [name, setName] = useState(isEdit ? (initialPrayer.name || '') : '');
+  const [description, setDescription] = useState(isEdit ? (initialPrayer.description || '') : '');
+  const [requestedAt, setRequestedAt] = useState(
+    isEdit
+      ? (initialPrayer.requestedAt ? initialPrayer.requestedAt.slice(0, 10) : new Date().toISOString().slice(0, 10))
+      : new Date().toISOString().slice(0, 10)
+  );
+  const [status, setStatus] = useState(isEdit ? initialPrayer.status || 'requested' : 'requested');
+  const [answeredAt, setAnsweredAt] = useState(
+    isEdit && initialPrayer.answeredAt ? initialPrayer.answeredAt.slice(0, 10) : ''
+  );
+  const [security, setSecurity] = useState(isEdit ? Boolean(initialPrayer.security) : false);
 
-  // Load all categories on mount
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Load categories + requestors once
   useEffect(() => {
-    db.categories.toArray().then(setCategories).catch(console.error);
-  }, []);
+    (async () => {
+      const [cats, reqs] = await Promise.all([db.categories.toArray(), db.requestors.toArray()]);
+      setCategories(cats);
+      setAllRequestors(reqs);
 
-  // Whenever categoryId changes, reload requestors just for that category
+      // If editing, derive initial category from the prayer's requestor
+      if (isEdit && initialPrayer.requestorId) {
+        const req = reqs.find((r) => r.id === initialPrayer.requestorId);
+        if (req?.categoryId) {
+          setCategoryId(req.categoryId);
+          setRequestorId(initialPrayer.requestorId);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, initialPrayer?.requestorId]);
+
+  // Filtered requestors by selected category
+  const requestors = useMemo(() => {
+    if (!categoryId) return [];
+    return allRequestors.filter((r) => r.categoryId === Number(categoryId));
+  }, [allRequestors, categoryId]);
+
+  // If category changes and current requestor doesn't belong, clear it
   useEffect(() => {
-    if (!categoryId) {
-      setRequestors([]);
-      setRequestorId('');
-      return;
-    }
-    db.requestors
-      .where('categoryId')
-      .equals(parseInt(categoryId, 10))
-      .toArray()
-      .then(reqs => {
-        setRequestors(reqs);
-        // Reset any previous requestor selection
-        setRequestorId('');
-      })
-      .catch(console.error);
-  }, [categoryId]);
+    if (requestorId == null) return;
+    const ok = requestors.some((r) => r.id === Number(requestorId));
+    if (!ok) setRequestorId(null);
+  }, [requestors, requestorId]);
 
-  // Handle form submission
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  async function handleSubmit(e) {
+    e?.preventDefault?.();
+    setErr('');
 
-    // Basic validation
-    if (!categoryId) {
-      alert('Please select a category first.');
-      return;
-    }
-    if (!requestorId) {
-      alert('Please select a requestor.');
-      return;
-    }
-    if (!name.trim()) {
-      alert('Please enter a prayer name.');
-      return;
-    }
+    // Validation
+    if (!categoryId) return setErr('Please choose a category.');
+    if (!requestorId) return setErr('Please choose a requestor.');
+    if (!name.trim()) return setErr('Please enter a title.');
+    if (!requestedAt) return setErr('Please choose the requested date.');
 
-    // Insert into IndexedDB
+    setBusy(true);
     try {
-      await db.prayers.add({
-        requestorId: parseInt(requestorId, 10),
-        name: name.trim(),
-        description: description.trim(),
-        requestedAt: new Date(requestedAt).toISOString(),
-        answeredAt: null,
-        status,
-        security: security ? 1 : 0
-      });
-      // Clear the form
-      setName('');
-      setDescription('');
-      setSecurity(false);
-      setStatus('requested');
-      // Notify parent to reload
-      onSuccess();
-    } catch (err) {
-      console.error('Error adding prayer:', err);
-      alert('Failed to add prayer. Check console for details.');
+      if (isEdit) {
+        // EDIT: Update existing prayer by id. Do NOT touch events.
+        await db.prayers.update(initialPrayer.id, {
+          requestorId: Number(requestorId),
+          name: name.trim(),
+          description: description.trim(),
+          requestedAt: requestedAt,
+          answeredAt: status === 'answered' ? (answeredAt || new Date().toISOString().slice(0, 10)) : null,
+          status,
+          security: security ? 1 : 0,
+        });
+      } else {
+        // CREATE: Add a new prayer
+        await db.prayers.add({
+          requestorId: Number(requestorId),
+          name: name.trim(),
+          description: description.trim(),
+          requestedAt,
+          answeredAt: status === 'answered' ? answeredAt || new Date().toISOString().slice(0, 10) : null,
+          status,
+          security: security ? 1 : 0,
+        });
+      }
+      emitDbChanged();
+      onSuccess?.();
+      if (!isEdit) {
+        // reset only in "add" mode
+        setRequestorId(null);
+        setCategoryId(null);
+        setName('');
+        setDescription('');
+        setRequestedAt(new Date().toISOString().slice(0, 10));
+        setAnsweredAt('');
+        setStatus('requested');
+        setSecurity(false);
+      }
+    } catch (e2) {
+      console.error('Prayer save failed', e2);
+      setErr('Failed to save. See console for details.');
+    } finally {
+      setBusy(false);
     }
-  };
+  }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 p-4 bg-gray-800 rounded-lg">
-      {/* Category selector */}
-      <div>
-        <label className="block text-gray-300">Category</label>
+    <form onSubmit={handleSubmit} className="p-4 bg-gray-700 rounded-lg">
+      <h4 className="text-white font-semibold mb-3">{isEdit ? 'Edit Prayer' : 'Add Prayer'}</h4>
+
+      {/* Category */}
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Category</label>
         <select
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
-          value={categoryId}
-          onChange={e => setCategoryId(e.target.value)}
+          value={categoryId ?? ''}
+          onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : null)}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          <option value="">— Select Category —</option>
-          {categories.map(cat => (
-            <option key={cat.id} value={cat.id}>
-              {cat.name}
-            </option>
+          <option value="" disabled>Select a category…</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
       </div>
 
-      {/* Requestor selector, only once a category is picked */}
-      <div>
-        <label className="block text-gray-300">Requestor</label>
+      {/* Requestor */}
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Requestor</label>
         <select
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
-          value={requestorId}
-          onChange={e => setRequestorId(e.target.value)}
+          value={requestorId ?? ''}
+          onChange={(e) => setRequestorId(e.target.value ? Number(e.target.value) : null)}
           disabled={!categoryId}
+          className="w-full p-2 bg-gray-600 text-white rounded disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          <option value="">— {categoryId ? 'Select Requestor' : 'Pick a Category first'} —</option>
-          {requestors.map(r => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
+          <option value="" disabled>{categoryId ? 'Select a requestor…' : 'Choose a category first'}</option>
+          {requestors.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
       </div>
 
-      {/* Prayer name */}
-      <div>
-        <label className="block text-gray-300">Prayer Title</label>
+      {/* Title */}
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Title</label>
         <input
           type="text"
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="Short descriptive title"
+          onChange={(e) => setName(e.target.value)}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
       {/* Description */}
-      <div>
-        <label className="block text-gray-300">Description</label>
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Details</label>
         <textarea
-          className="w-full mt-1 p-2 bg-gray-700 rounded text-white"
           value={description}
-          onChange={e => setDescription(e.target.value)}
-          placeholder="Longer explanation (optional)"
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
 
-      {/* Date & status */}
-      <div className="flex space-x-4">
-        <div>
-          <label className="block text-gray-300">Requested Date</label>
+      {/* Requested date */}
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Requested date</label>
+        <input
+          type="date"
+          value={requestedAt}
+          onChange={(e) => setRequestedAt(e.target.value)}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      {/* Status + answered date */}
+      <div className="mb-2">
+        <label className="block text-gray-300 text-sm mb-1">Status</label>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="requested">Requested</option>
+          <option value="answered">Answered</option>
+        </select>
+
+        {status === 'answered' && (
           <input
             type="date"
-            className="mt-1 p-2 bg-gray-700 rounded text-white"
-            value={requestedAt}
-            onChange={e => setRequestedAt(e.target.value)}
+            value={answeredAt}
+            onChange={(e) => setAnsweredAt(e.target.value)}
+            className="mt-2 w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-        </div>
-        <div>
-          <label className="block text-gray-300">Status</label>
-          <select
-            className="mt-1 p-2 bg-gray-700 rounded text-white"
-            value={status}
-            onChange={e => setStatus(e.target.value)}
-          >
-            <option value="requested">Requested</option>
-            <option value="answered">Answered</option>
-          </select>
-        </div>
+        )}
       </div>
 
-      {/* Security checkbox */}
-      <label className="inline-flex items-center text-gray-300">
+      {/* Security flag */}
+      <div className="flex items-center mb-2">
         <input
+          id="pf-security"
           type="checkbox"
-          className="form-checkbox h-5 w-5 text-yellow-400"
           checked={security}
-          onChange={e => setSecurity(e.target.checked)}
+          onChange={(e) => setSecurity(e.target.checked)}
+          className="mr-2"
         />
-        <span className="ml-2">Security View Only</span>
-      </label>
+        <label htmlFor="pf-security" className="text-gray-200 text-sm">Security Only</label>
+      </div>
 
-      {/* Submit */}
-      <button
-        type="submit"
-        className="w-full py-2 bg-yellow-500 rounded text-black font-semibold hover:bg-yellow-600"
-      >
-        Add Prayer
-      </button>
+      {err && <p className="text-red-400 text-sm mb-2">{err}</p>}
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={busy}
+          className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white disabled:opacity-50"
+        >
+          {busy ? 'Saving…' : (isEdit ? 'Save Changes' : 'Add Prayer')}
+        </button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }
