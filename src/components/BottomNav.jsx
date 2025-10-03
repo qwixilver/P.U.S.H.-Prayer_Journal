@@ -1,59 +1,63 @@
 // src/components/BottomNav.jsx
-// Button-only bottom navigation with emojis to the LEFT of labels.
-// - No anchors or forms (prevents reloads on GitHub Pages).
-// - Restores emojis for visual affordance.
-// - Highlights active tab; keyboard-accessible with focus rings.
-// - Uses safe-area padding for modern phones with home indicator.
+// Bottom tab bar: Daily, Single, Categories, Security
+// - Raised z-index so it stays above any content overlays
+// - Pointer-events explicitly enabled
+// - Preserves props: activeTab, onTabChange
+// - Accessible: aria-current, focus rings, safe-area spacer
 
 import React from 'react';
 
-// Simple emoji map (feel free to tweak)
-const ICONS = {
-  single: '🙏',      // Single view
-  daily: '📋',       // Daily list
-  categories: '🗂️',  // Categories
-  security: '🔒',    // Security list
-};
+const TABS = [
+  { key: 'daily', label: 'Daily', icon: '🗓️' },
+  { key: 'single', label: 'Single', icon: '🎯' },
+  { key: 'categories', label: 'Categories', icon: '📂' },
+  { key: 'security', label: 'Security', icon: '🔒' },
+];
 
-export default function BottomNav({ active, onChange }) {
-  const Item = ({ id, label }) => {
-    const isActive = active === id;
-    return (
-      <button
-        type="button"
-        onClick={() => onChange?.(id)}
-        title={label}
-        aria-current={isActive ? 'page' : undefined}
-        className={[
-          'flex-1 px-3 py-3',
-          'inline-flex items-center justify-center gap-2',
-          'text-sm font-medium transition',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800 rounded-md',
-          isActive ? 'text-yellow-400' : 'text-gray-300 hover:text-white',
-        ].join(' ')}
-      >
-        <span aria-hidden="true" className="text-base leading-none">{ICONS[id]}</span>
-        <span>{label}</span>
-      </button>
-    );
+export default function BottomNav({ activeTab, onTabChange }) {
+  const change = (key) => {
+    if (typeof onTabChange === 'function') onTabChange(key);
   };
 
   return (
     <nav
-      className="
-        sticky bottom-0 left-0 right-0 z-50
-        bg-gray-800 border-t border-gray-700
-        flex items-center justify-between
-        px-2
-        pb-[max(env(safe-area-inset-bottom),0px)]  /* pad for iOS home indicator */
-      "
       role="navigation"
-      aria-label="Bottom navigation"
+      aria-label="Bottom Navigation"
+      className="
+        fixed bottom-0 inset-x-0
+        z-[9999]               /* >>> ensure clicks are not blocked by any content */
+        pointer-events-auto    /* >>> make absolutely sure we receive pointer events */
+        bg-gray-900/95 backdrop-blur
+        border-t border-gray-800
+      "
     >
-      <Item id="single" label="Single" />
-      <Item id="daily" label="Daily" />
-      <Item id="categories" label="Categories" />
-      <Item id="security" label="Security" />
+      <div className="max-w-3xl mx-auto flex">
+        {TABS.map((t) => {
+          const active = t.key === activeTab;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => change(t.key)}
+              aria-current={active ? 'page' : undefined}
+              className={[
+                'flex-1 flex flex-col items-center justify-center gap-0.5 py-2',
+                'text-xs font-medium',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400',
+                active ? 'text-yellow-300' : 'text-gray-300 hover:text-white',
+              ].join(' ')}
+            >
+              <span className="text-base leading-none" aria-hidden="true">
+                {t.icon}
+              </span>
+              <span>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* iOS safe-area pad to avoid home indicator overlap */}
+      <div className="h-[env(safe-area-inset-bottom)]" />
     </nav>
   );
 }
