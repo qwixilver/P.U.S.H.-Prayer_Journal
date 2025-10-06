@@ -1,0 +1,5 @@
+ - Prayers: category→requestor grouping, edit via modal, events timeline, single view polish
+ - Journal: Markdown rendering + search
+ - Settings: backup/restore (JSON), includes journal entries
+ - PWA: offline, installable
+ - UI: dark theme, FABs, bottom nav

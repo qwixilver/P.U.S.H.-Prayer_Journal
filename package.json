@@ -1,5 +1,5 @@
 {
-  "name": "prayer-journal-web",
+  "name": "P.U.S.H. Prayer journal",
   "version": "1.0.0",
   "description": "A mobile-first, offline-capable prayer journal PWA using React, Tailwind CSS, and IndexedDB via Dexie.",
   "scripts": {
