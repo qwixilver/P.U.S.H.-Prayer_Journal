@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // IMPORTANT: must match your GitHub repo name exactly
-const base = '/P.U.S.H.-Prayer_Journal/';
+const base = '/';
 
 export default defineConfig({
   base,
