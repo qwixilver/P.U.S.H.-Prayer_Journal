@@ -28,7 +28,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   const [categories, setCategories] = useState([]);
   const [requestors, setRequestors] = useState([]);
   const [prayers, setPrayers] = useState([]);
-const [addingEventFor, setAddingEventFor] = useState({});
+  const [addingEventFor, setAddingEventFor] = useState({});
 
   const [loading, setLoading] = useState(true);
 
@@ -212,37 +212,37 @@ const [addingEventFor, setAddingEventFor] = useState({});
 
                   {expanded[p.id] && (
                     <div className="mt-2 text-gray-200 whitespace-pre-wrap">
-  {p.description}
+                      {p.description}
 
-  {/* Events for this prayer */}
-  <div className="mt-4">
-    <div className="flex items-center justify-between mb-2">
-      <h4 className="text-white font-semibold">Events</h4>
-      <button
-        className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
-        onClick={() =>
-          setAddingEventFor((m) => ({ ...m, [p.id]: !m[p.id] }))
-        }
-      >
-        {addingEventFor[p.id] ? 'Close' : 'Add event'}
-      </button>
-    </div>
+                      {/* Events for this prayer */}
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-white font-semibold">Events</h4>
+                          <button
+                            className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+                            onClick={() =>
+                              setAddingEventFor((m) => ({ ...m, [p.id]: !m[p.id] }))
+                            }
+                          >
+                            {addingEventFor[p.id] ? 'Close' : 'Add event'}
+                          </button>
+                        </div>
 
-    {addingEventFor[p.id] && (
-      <PrayerEventForm
-        prayerId={p.id}
-        onSuccess={() =>
-          setAddingEventFor((m) => ({ ...m, [p.id]: false }))
-        }
-        onCancel={() =>
-          setAddingEventFor((m) => ({ ...m, [p.id]: false }))
-        }
-      />
-    )}
+                        {addingEventFor[p.id] && (
+                          <PrayerEventForm
+                            prayerId={p.id}
+                            onSuccess={() =>
+                              setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+                            }
+                            onCancel={() =>
+                              setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+                            }
+                          />
+                        )}
 
-    <PrayerEventList prayerId={p.id} allowDelete={true} compact />
-  </div>
-</div>
+                        <PrayerEventList prayerId={p.id} allowDelete={true} compact />
+                      </div>
+                    </div>
 
                   )}
                 </li>
@@ -313,7 +313,35 @@ const [addingEventFor, setAddingEventFor] = useState({});
                       {expanded[p.id] && (
                         <div className="mt-2 text-gray-200 whitespace-pre-wrap">
                           {p.description}
-                          {/* events UI lives below description if you previously included it here */}
+                          {/* Events (Daily view) */}
+                          <div className="mt-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-white font-semibold">Events</h4>
+                              <button
+                                className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+                                onClick={() =>
+                                  setAddingEventFor((m) => ({ ...m, [p.id]: !m[p.id] }))
+                                }
+                              >
+                                {addingEventFor[p.id] ? 'Close' : 'Add event'}
+                              </button>
+                            </div>
+
+                            {addingEventFor[p.id] && (
+                              <PrayerEventForm
+                                prayerId={p.id}
+                                onSuccess={() =>
+                                  setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+                                }
+                                onCancel={() =>
+                                  setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+                                }
+                              />
+                            )}
+
+                            <PrayerEventList prayerId={p.id} allowDelete={true} compact />
+                          </div>
+
                         </div>
                       )}
                     </li>
@@ -341,7 +369,7 @@ const [addingEventFor, setAddingEventFor] = useState({});
           title="Add prayer"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7" fill="none"
-               viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
           </svg>
         </button>
