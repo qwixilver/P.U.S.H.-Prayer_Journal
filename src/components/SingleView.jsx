@@ -8,6 +8,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
 import PrayerUpsertModal from './PrayerUpsertModal';
+import PrayerEventList from './PrayerEventList';
+import PrayerEventForm from './PrayerEventForm';
 
 function fmt(iso) {
   if (!iso) return '';
@@ -23,6 +25,8 @@ export default function SingleView({ initialPrayerId = null }) {
 
   // NEW: show edit modal
   const [editOpen, setEditOpen] = useState(false);
+  const [addEventOpen, setAddEventOpen] = useState(false);
+
 
   async function loadEligible() {
     setLoading(true);
@@ -102,8 +106,32 @@ export default function SingleView({ initialPrayerId = null }) {
         <div className="mt-3 overflow-y-auto">
           <p className="text-gray-100 whitespace-pre-wrap">{current.description || '(No details)'}</p>
 
-          {/* Your events list/form remain here (unchanged), below the description */}
-          {/* If you render events in SingleView, leave that code intact right here. */}
+          {/* Events timeline + Add Event */}
+<div className="mt-4">
+  <div className="flex items-center justify-between mb-2">
+    <h4 className="text-white font-semibold">Events</h4>
+    {current && (
+      <button
+        onClick={() => setAddEventOpen((v) => !v)}
+        className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+      >
+        {addEventOpen ? 'Close' : 'Add event'}
+      </button>
+    )}
+  </div>
+
+  {addEventOpen && current && (
+    <PrayerEventForm
+      prayerId={current.id}
+      onSuccess={() => setAddEventOpen(false)}
+      onCancel={() => setAddEventOpen(false)}
+    />
+  )}
+
+  {current && <PrayerEventList prayerId={current.id} allowDelete={true} />}
+  {!current && <p className="text-gray-400 text-sm">No prayer selected.</p>}
+</div>
+
         </div>
 
         {/* Next button fixed to bottom-left of card */}

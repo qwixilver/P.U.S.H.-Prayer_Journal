@@ -10,6 +10,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
 import PrayerForm from './PrayerForm';
 import PrayerUpsertModal from './PrayerUpsertModal';
+import PrayerEventList from './PrayerEventList';
+import PrayerEventForm from './PrayerEventForm';
+
 
 // Format helper
 function fmt(iso) {
@@ -25,6 +28,7 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
   const [categories, setCategories] = useState([]);
   const [requestors, setRequestors] = useState([]);
   const [prayers, setPrayers] = useState([]);
+const [addingEventFor, setAddingEventFor] = useState({});
 
   const [loading, setLoading] = useState(true);
 
@@ -208,9 +212,38 @@ export default function PrayerList({ viewType = 'daily', onOpenSingle }) {
 
                   {expanded[p.id] && (
                     <div className="mt-2 text-gray-200 whitespace-pre-wrap">
-                      {p.description}
-                      {/* Your events UI remains here if previously present. */}
-                    </div>
+  {p.description}
+
+  {/* Events for this prayer */}
+  <div className="mt-4">
+    <div className="flex items-center justify-between mb-2">
+      <h4 className="text-white font-semibold">Events</h4>
+      <button
+        className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+        onClick={() =>
+          setAddingEventFor((m) => ({ ...m, [p.id]: !m[p.id] }))
+        }
+      >
+        {addingEventFor[p.id] ? 'Close' : 'Add event'}
+      </button>
+    </div>
+
+    {addingEventFor[p.id] && (
+      <PrayerEventForm
+        prayerId={p.id}
+        onSuccess={() =>
+          setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+        }
+        onCancel={() =>
+          setAddingEventFor((m) => ({ ...m, [p.id]: false }))
+        }
+      />
+    )}
+
+    <PrayerEventList prayerId={p.id} allowDelete={true} compact />
+  </div>
+</div>
+
                   )}
                 </li>
               );
