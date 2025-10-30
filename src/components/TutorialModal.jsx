@@ -18,6 +18,30 @@ export default function TutorialModal({ onClose }) {
   const isFirst = idx === 0;
   const isLast = idx === slides.length - 1;
 
+  function handlePrimary() {
+    if (isLast) {
+      onClose?.();
+      return;
+    }
+    setIdx((i) => Math.min(slides.length - 1, i + 1));
+  }
+
+  function handleBack() {
+    setIdx((i) => Math.max(0, i - 1));
+  }
+
+  function handleSecondary() {
+    // Close tutorial (mark onboarded) then jump to Settings.
+    onClose?.();
+    // Hash update for consistency + custom event for immediate nav
+    try {
+      if (window.location.hash !== '#settings') {
+        history.replaceState(null, '', '#settings');
+      }
+      window.dispatchEvent(new CustomEvent('ui:nav', { detail: 'settings' }));
+    } catch {}
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -39,7 +63,7 @@ export default function TutorialModal({ onClose }) {
         <div className="flex items-center justify-between">
           <button
             className="px-3 py-2 rounded bg-gray-700 disabled:opacity-40"
-            onClick={() => setIdx((i) => Math.max(0, i - 1))}
+            onClick={handleBack}
             disabled={isFirst}
           >
             Back
@@ -47,22 +71,26 @@ export default function TutorialModal({ onClose }) {
 
           <div className="text-sm text-gray-400">{idx + 1} / {slides.length}</div>
 
-          {isLast ? (
-            <button
-              className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700"
-              onClick={onClose}
-            >
-              {slide.cta || 'Finish'}
-            </button>
-          ) : (
-            <button
-              className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700"
-              onClick={() => setIdx((i) => Math.min(slides.length - 1, i + 1))}
-            >
-              {slide.cta || 'Next'}
-            </button>
-          )}
+          <button
+            className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700"
+            onClick={handlePrimary}
+          >
+            {slide.cta || (isLast ? 'Finish' : 'Next')}
+          </button>
         </div>
+
+        {/* Secondary CTA (link-style), only when provided */}
+        {slide.secondaryCta && isLast && (
+          <div className="mt-4 text-right">
+            <button
+              type="button"
+              onClick={handleSecondary}
+              className="text-sm underline text-gray-300 hover:text-white"
+            >
+              {slide.secondaryCta}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

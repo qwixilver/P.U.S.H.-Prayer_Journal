@@ -12,20 +12,18 @@ import ErrorBoundary from './components/ErrorBoundary';
 import EmergencyRestore from './components/EmergencyRestore';
 import Settings from './components/Settings';
 
-// Tutorial (you've already added TutorialModal.jsx per instructions)
+// Tutorial
 import TutorialModal from './components/TutorialModal';
 
 const TAB_STORAGE_KEY = 'cp:activeTab';
 const ONBOARDED_KEY = 'cp:onboarded';
 
 function getInitialTab() {
-  // Prefer a valid hash like "#single" → "single"
   const hash = (window.location.hash || '').replace(/^#/, '').trim();
   const candidates = new Set(['daily','single','categories','journal','security','settings','restore']);
   if (hash && candidates.has(hash)) {
-    return hash === 'restore' ? 'daily' : hash; // 'restore' only toggles modal
+    return hash === 'restore' ? 'daily' : hash;
   }
-  // Fallback to last tab or default to 'daily'
   return localStorage.getItem(TAB_STORAGE_KEY) || 'daily';
 }
 
@@ -34,7 +32,6 @@ export default function App() {
   const [showRestore, setShowRestore] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
 
-  // Handle first run tutorial + manual reopen hook
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDED_KEY)) setShowTutorial(true);
     const openTutorial = () => setShowTutorial(true);
@@ -42,20 +39,28 @@ export default function App() {
     return () => window.removeEventListener('ui:showTutorial', openTutorial);
   }, []);
 
-  // React to hash changes for emergency restore pane
+  // NEW: listen for programmatic navigation (e.g., tutorial "Open Settings")
+  useEffect(() => {
+    const onNav = (e) => {
+      const tab = e?.detail;
+      if (typeof tab === 'string') handleTabChange(tab);
+    };
+    window.addEventListener('ui:nav', onNav);
+    return () => window.removeEventListener('ui:nav', onNav);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Hash change for emergency restore
   useEffect(() => {
     const applyHash = () => {
       const h = (window.location.hash || '').toLowerCase();
-      if (h === '#restore') {
-        setShowRestore(true);
-      }
+      if (h === '#restore') setShowRestore(true);
     };
     applyHash();
     window.addEventListener('hashchange', applyHash);
     return () => window.removeEventListener('hashchange', applyHash);
   }, []);
 
-  // Persist tab and mirror hash (without breaking restore)
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     localStorage.setItem(TAB_STORAGE_KEY, tab);
@@ -69,7 +74,6 @@ export default function App() {
 
   return (
     <>
-      {/* Main content area */}
       <main className="min-h-screen bg-gray-900 text-white pb-24">
         <ErrorBoundary>
           {activeTab === 'daily'      && <PrayerList isSecurity={false} />}
@@ -81,10 +85,8 @@ export default function App() {
         </ErrorBoundary>
       </main>
 
-      {/* Bottom navigation fixed to viewport bottom */}
       <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
 
-      {/* One-time tutorial modal */}
       {showTutorial && (
         <TutorialModal
           onClose={() => {
@@ -94,11 +96,9 @@ export default function App() {
         />
       )}
 
-      {/* Emergency restore panel (from #restore) */}
       {showRestore && (
         <EmergencyRestore
           onClose={() => {
-            // Clean up the hash so it won't re-open on refresh
             history.replaceState(null, '', '#');
             setShowRestore(false);
           }}
