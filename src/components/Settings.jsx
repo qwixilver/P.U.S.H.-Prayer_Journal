@@ -1,16 +1,15 @@
 // src/components/Settings.jsx
 // Full Settings page with:
-//  - Notifications & Reminders (NEW)
+//  - Notifications & Reminders (Fixed times OR Interval schedule; simple/random/ordered modes)
 //  - JSON Backup/Restore (export + import with merge/replace)
 //  - Advanced CSV Import (unlockable via hidden gesture)
 //  - Onboarding controls (show tutorial / reset flag)
 //
 // Notes:
-//  - Notifications are privacy-first, no server. Uses OS-level scheduled notifications if available,
-//    else falls back to in-app timers while the app is open. Also offers .ics export for reliable alarms.
-//  - All styling preserves your dark theme.
+//  - Interval schedule is "every N minutes/hours" (min 5 minutes).
+//  - .ics export uses RRULE for interval, enumerated events for fixed-times.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { emitDbChanged, db } from '../db';
 import {
   exportAllAsJson,
@@ -19,7 +18,6 @@ import {
   importFromCsvBundle,
 } from '../utils/backup';
 
-// NEW: notifications utils
 import {
   loadNotificationConfig,
   saveNotificationConfig,
@@ -32,27 +30,20 @@ import {
 
 const UNLOCK_KEY = 'pj_unlockCsvImport';
 
-// -------------------- Notifications helpers (UI) --------------------
+// -------------------- Notifications defaults --------------------
 const DEFAULT_NOTIF_CFG = {
   enabled: false,
   mode: 'simple', // 'simple' | 'random' | 'ordered-category' | 'ordered-requestor'
-  times: ['08:00', '20:00'], // daily times
+  scheduleType: 'fixed-times', // 'fixed-times' | 'interval'
+  times: ['08:00', '20:00'], // fixed-times mode
+  intervalMinutes: 60,       // interval mode
   daysOfWeek: [true, true, true, true, true, true, true], // Sun..Sat
   categoryId: null,
   requestorId: null,
 };
 
-function formatTime(hhmm) {
-  const [h, m] = hhmm.split(':').map(n => parseInt(n, 10));
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
-  const am = h < 12;
-  const h12 = ((h + 11) % 12) + 1;
-  return `${h12}:${m.toString().padStart(2,'0')} ${am ? 'AM' : 'PM'}`;
-}
-
-// -------------------- Component --------------------
 export default function Settings() {
-  // ===== Notifications (NEW) =====
+  // ===== Notifications =====
   const [notifMsg, setNotifMsg] = useState('');
   const [notifBusy, setNotifBusy] = useState(false);
   const [notifCfg, setNotifCfg] = useState(() => ({ ...DEFAULT_NOTIF_CFG, ...(loadNotificationConfig() || {}) }));
@@ -60,14 +51,11 @@ export default function Settings() {
   const [categories, setCategories] = useState([]);
   const [requestors, setRequestors] = useState([]);
 
-  // Load options for ordered modes
   useEffect(() => {
     (async () => {
       const cats = await db.categories.toArray();
-      // keep alphabetical
       cats.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
       setCategories(cats);
-
       const reqs = await db.requestors.toArray();
       reqs.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
       setRequestors(reqs);
@@ -77,6 +65,10 @@ export default function Settings() {
   function updateNotifCfg(patch) {
     setNotifCfg(prev => {
       const next = { ...prev, ...patch };
+      // sanity defaults
+      if (!Array.isArray(next.times) || !next.times.length) next.times = ['08:00'];
+      if (!Array.isArray(next.daysOfWeek) || next.daysOfWeek.length !== 7) next.daysOfWeek = [true,true,true,true,true,true,true];
+      if (!Number.isFinite(Number(next.intervalMinutes)) || next.intervalMinutes < 5) next.intervalMinutes = 60;
       saveNotificationConfig(next);
       return next;
     });
@@ -87,7 +79,6 @@ export default function Settings() {
       setNotifBusy(true);
       setNotifMsg('');
       await ensurePermission();
-      // show a quick test notification via SW or page
       if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         await reg.showNotification('Closet Prayer — Test', {
@@ -115,6 +106,14 @@ export default function Settings() {
         setNotifMsg('Notifications are disabled. Nothing scheduled.');
         return;
       }
+      // Validation for interval mode
+      if (notifCfg.scheduleType === 'interval') {
+        const m = parseInt(notifCfg.intervalMinutes, 10);
+        if (!Number.isFinite(m) || m < 5) {
+          setNotifMsg('Please choose an interval of at least 5 minutes.');
+          return;
+        }
+      }
       await ensurePermission();
       await scheduleNotifications(notifCfg);
       setPerm(Notification.permission);
@@ -141,7 +140,7 @@ export default function Settings() {
 
   function handleExportICS() {
     try {
-      const ics = buildICS(notifCfg, 60); // next 60 days
+      const ics = buildICS(notifCfg, 60);
       downloadICS(ics);
       setNotifMsg('.ics calendar exported.');
     } catch (e) {
@@ -149,7 +148,7 @@ export default function Settings() {
     }
   }
 
-  // ===== Backup/Restore + Advanced CSV (existing) =====
+  // ===== Backup/Restore + Advanced CSV (as previously delivered) =====
   const jsonFileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -313,7 +312,7 @@ export default function Settings() {
     <div className="relative overflow-y-auto p-4 pb-24">
       <h2 className="text-2xl font-bold mb-4">Settings</h2>
 
-      {/* ===== Notifications & Reminders (NEW) ===== */}
+      {/* ===== Notifications & Reminders ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow space-y-4 mb-6">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-white">Notifications &amp; Reminders</h3>
@@ -330,7 +329,7 @@ export default function Settings() {
         <div className="text-sm text-gray-300">
           <p>
             Get gentle reminders to pray. No servers, no accounts — scheduled locally on your device.
-            For maximum reliability across all platforms, you can also export an <span className="italic">.ics</span> calendar.
+            For maximum reliability across platforms, you can also export an <span className="italic">.ics</span> calendar.
           </p>
           <p className="mt-1">
             Permission: <span className="font-medium">{perm}</span>
@@ -340,7 +339,7 @@ export default function Settings() {
         {/* Mode selection */}
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="bg-gray-900 rounded p-3">
-            <label className="block text-gray-200 text-sm mb-1">Mode</label>
+            <label className="block text-gray-200 text-sm mb-1">Notification content</label>
             <select
               className="w-full bg-gray-700 text-white rounded p-2"
               value={notifCfg.mode}
@@ -351,6 +350,7 @@ export default function Settings() {
               <option value="ordered-category">Ordered cycle by Category</option>
               <option value="ordered-requestor">Ordered cycle by Requestor</option>
             </select>
+
             {notifCfg.mode === 'ordered-category' && (
               <div className="mt-2">
                 <label className="block text-gray-200 text-sm mb-1">Category</label>
@@ -366,6 +366,7 @@ export default function Settings() {
                 </select>
               </div>
             )}
+
             {notifCfg.mode === 'ordered-requestor' && (
               <div className="mt-2">
                 <label className="block text-gray-200 text-sm mb-1">Requestor</label>
@@ -383,42 +384,74 @@ export default function Settings() {
             )}
           </div>
 
-          {/* Schedule config */}
+          {/* Schedule config (Fixed times or Interval) */}
           <div className="bg-gray-900 rounded p-3">
-            <label className="block text-gray-200 text-sm mb-2">Times (daily)</label>
-            <div className="flex flex-wrap gap-2">
-              {notifCfg.times.map((t, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="time"
-                    className="bg-gray-700 text-white rounded p-2"
-                    value={t}
-                    onChange={(e) => {
-                      const times = [...notifCfg.times];
-                      times[i] = e.target.value;
-                      updateNotifCfg({ times });
-                    }}
-                  />
+            <label className="block text-gray-200 text-sm mb-1">Schedule type</label>
+            <select
+              className="w-full bg-gray-700 text-white rounded p-2 mb-3"
+              value={notifCfg.scheduleType || 'fixed-times'}
+              onChange={(e) => updateNotifCfg({ scheduleType: e.target.value })}
+            >
+              <option value="fixed-times">Fixed times (e.g., 8:00 AM, 8:00 PM)</option>
+              <option value="interval">Interval (every N minutes/hours)</option>
+            </select>
+
+            {notifCfg.scheduleType !== 'interval' ? (
+              <>
+                <label className="block text-gray-200 text-sm mb-2">Times (daily)</label>
+                <div className="flex flex-wrap gap-2">
+                  {notifCfg.times.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        className="bg-gray-700 text-white rounded p-2"
+                        value={t}
+                        onChange={(e) => {
+                          const times = [...notifCfg.times];
+                          times[i] = e.target.value;
+                          updateNotifCfg({ times });
+                        }}
+                      />
+                      <button
+                        className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600"
+                        onClick={() => {
+                          const times = notifCfg.times.filter((_, idx) => idx !== i);
+                          updateNotifCfg({ times: times.length ? times : ['08:00'] });
+                        }}
+                        title="Remove time"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
                   <button
                     className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600"
-                    onClick={() => {
-                      const times = notifCfg.times.filter((_, idx) => idx !== i);
-                      updateNotifCfg({ times: times.length ? times : ['08:00'] });
-                    }}
-                    title="Remove time"
+                    onClick={() => updateNotifCfg({ times: [...notifCfg.times, '12:00'] })}
                   >
-                    Remove
+                    + Add time
                   </button>
                 </div>
-              ))}
-              <button
-                className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600"
-                onClick={() => updateNotifCfg({ times: [...notifCfg.times, '12:00'] })}
-              >
-                + Add time
-              </button>
-            </div>
+              </>
+            ) : (
+              <>
+                <label className="block text-gray-200 text-sm mb-2">Interval</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={5}
+                    step={1}
+                    className="bg-gray-700 text-white rounded p-2 w-24"
+                    value={notifCfg.intervalMinutes}
+                    onChange={(e) => updateNotifCfg({ intervalMinutes: Math.max(5, parseInt(e.target.value || '0', 10) || 0) })}
+                    title="Minimum 5 minutes"
+                  />
+                  <span className="text-gray-300 text-sm">minutes</span>
+                  <span className="text-gray-500 text-xs">Tip: 60 = hourly, 30 = every 30 min, 180 = every 3 hours.</span>
+                </div>
+              </>
+            )}
 
+            {/* Days of week always available */}
             <div className="mt-3">
               <label className="block text-gray-200 text-sm mb-1">Days of week</label>
               <div className="grid grid-cols-7 gap-1 text-xs text-gray-200">
@@ -447,7 +480,7 @@ export default function Settings() {
             className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
             onClick={handleSaveAndSchedule}
             disabled={notifBusy}
-            title="Schedules next 14 days; repeats when you press Save again"
+            title="Schedules next 14 days; re-run after changes."
           >
             Save &amp; schedule
           </button>
@@ -469,7 +502,7 @@ export default function Settings() {
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
             onClick={handleExportICS}
             disabled={notifBusy}
-            title="Creates a calendar file with your schedule for 60 days"
+            title="Creates a calendar file (interval = RRULE; fixed times = enumerated)"
           >
             Export .ics (calendar)
           </button>
@@ -478,12 +511,12 @@ export default function Settings() {
         {notifMsg && <p className="text-gray-300">{notifMsg}</p>}
 
         <p className="text-xs text-gray-400">
-          Tip: For Android (installed PWA), some browsers support scheduled notifications natively. On desktop/iOS, the
-          .ics option is the most reliable always-on solution without using a server.
+          Tip: Some browsers support scheduled notifications natively (Notification Triggers). On platforms that don’t,
+          the .ics option is the most reliable without using a server.
         </p>
       </section>
 
-      {/* ===== Backup & Restore (existing) ===== */}
+      {/* ===== Backup & Restore ===== */}
       <section
         className="bg-gray-800 rounded-lg p-4 shadow select-none"
         onMouseDown={beginLongPress}
@@ -553,6 +586,7 @@ export default function Settings() {
           </div>
         )}
 
+        {/* Advanced (CSV) */}
         {advancedVisible && (
           <div className="mt-6 border-t border-gray-700 pt-4">
             <div className="flex items-center justify-between mb-3">
@@ -625,7 +659,7 @@ export default function Settings() {
         {message && <p className="mt-4 text-gray-300">{message}</p>}
       </section>
 
-      {/* ===== Onboarding (existing) ===== */}
+      {/* ===== Onboarding ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow mt-6">
         <h3 className="text-lg font-semibold text-white mb-2">Onboarding</h3>
         <div className="flex flex-wrap gap-2">
@@ -648,7 +682,7 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* ===== About (existing) ===== */}
+      {/* ===== About ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow mt-6">
         <h3 className="text-lg font-semibold text-white mb-2">About</h3>
         <p className="text-gray-300 text-sm">

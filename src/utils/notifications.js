@@ -1,8 +1,8 @@
 // src/utils/notifications.js
 // Lightweight, privacy-friendly notifications manager.
-// - Schedules OS-level notifications when Notification Triggers are available.
-// - Falls back to in-app timers while the app is open.
-// - Offers .ics export for device calendar alarms.
+// - Fixed-times schedule (specific times per day) OR interval schedule (every N minutes/hours).
+// - Uses Notification Triggers where available; falls back to in-app timers.
+// - Optional .ics export (fixed-times enumerated; interval uses RRULE).
 // - No servers, no push endpoints, no accounts.
 
 import { db } from '../db';
@@ -44,6 +44,11 @@ function supportsTriggers() {
   }
 }
 
+// ---------- date helpers ----------
+function ms(n) { return n; }
+const MIN = 60 * 1000;
+const DAY = 24 * 60 * MIN;
+
 // Parse "HH:mm" → Date (today at time), and return timestamp in ms for a given date anchor.
 function timeOnDate(anchor, hhmm) {
   const [h, m] = (hhmm || '09:00').split(':').map((n) => parseInt(n, 10));
@@ -54,12 +59,49 @@ function timeOnDate(anchor, hhmm) {
 
 // daysOfWeek = [0..6] booleans; return true if given date matches.
 function isAllowedDay(date, daysOfWeek) {
-  if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return true; // default allow
+  if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return true; // default allow all
   return !!daysOfWeek[date.getDay()];
 }
 
-// Build a list of upcoming timestamps (ms) for the next N days at given times (HH:mm strings)
-function buildUpcomingTimestamps({ times = ['09:00'], daysOfWeek = [true,true,true,true,true,true,true] }, horizonDays = 14) {
+// ---------- schedule builder (fixed-times or interval) ----------
+/**
+ * Build upcoming timestamps respecting cfg.scheduleType:
+ * - 'fixed-times': at cfg.times on allowed days over horizonDays
+ * - 'interval': every cfg.intervalMinutes from "now", capped by maxOccurrences/horizonDays and filtered by allowed days
+ */
+function buildUpcomingSchedule(
+  cfg,
+  { horizonDays = 14, maxOccurrences = 64 } = {}
+) {
+  const now = Date.now();
+
+  // Default to fixed-times for backward compatibility
+  const scheduleType = cfg?.scheduleType || 'fixed-times';
+  const daysOfWeek =
+    Array.isArray(cfg?.daysOfWeek) && cfg.daysOfWeek.length === 7
+      ? cfg.daysOfWeek
+      : [true, true, true, true, true, true, true];
+
+  if (scheduleType === 'interval') {
+    // Interval in minutes (min 5 minutes to avoid OS throttling / abuse)
+    let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
+    if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
+
+    const out = [];
+    const horizonLimit = now + horizonDays * DAY;
+
+    // Start at the next tick from now
+    let t = now + intervalMin * MIN;
+    while (t <= horizonLimit && out.length < maxOccurrences) {
+      const d = new Date(t);
+      if (isAllowedDay(d, daysOfWeek)) out.push(t);
+      t += intervalMin * MIN;
+    }
+    return out;
+  }
+
+  // fixed-times (existing behavior)
+  const times = Array.isArray(cfg?.times) && cfg.times.length ? cfg.times : ['09:00'];
   const out = [];
   const start = new Date();
   start.setSeconds(0, 0);
@@ -68,10 +110,12 @@ function buildUpcomingTimestamps({ times = ['09:00'], daysOfWeek = [true,true,tr
     if (!isAllowedDay(d, daysOfWeek)) continue;
     for (const t of times) {
       const ts = timeOnDate(d, t);
-      if (ts > Date.now()) out.push(ts);
+      if (ts > now) out.push(ts);
     }
   }
-  return out;
+  // Respect maxOccurrences to avoid over-scheduling
+  out.sort((a, b) => a - b);
+  return out.slice(0, maxOccurrences);
 }
 
 // ---------- picking logic ----------
@@ -107,7 +151,6 @@ function getAndBumpCycle(scope, id, listLen) {
 
 async function pickOrderedByCategory(categoryId) {
   if (!categoryId) return null;
-  // All requested prayers under requestors in category
   const reqs = await db.requestors.where('categoryId').equals(categoryId).toArray();
   const reqIds = reqs.map(r => r.id);
   if (!reqIds.length) return null;
@@ -193,13 +236,11 @@ export async function clearScheduledNotifications() {
   if (!('serviceWorker' in navigator)) return;
   try {
     const reg = await navigator.serviceWorker.ready;
-    // Best-effort: close any pending notifications with our tag prefix.
     const list = await reg.getNotifications({});
     list.forEach(n => {
       if (n.tag && String(n.tag).startsWith(SCHEDULE_TAG_PREFIX)) n.close();
     });
   } catch (e) {
-    // best effort
     console.warn('clearScheduledNotifications warning', e);
   }
 }
@@ -208,7 +249,7 @@ export async function scheduleNotifications(cfg) {
   await ensurePermission();
   await clearScheduledNotifications();
 
-  const timestamps = buildUpcomingTimestamps(cfg, 14); // next 2 weeks
+  const timestamps = buildUpcomingSchedule(cfg, { horizonDays: 14, maxOccurrences: 64 }); // next 2 weeks, capped
   let useTriggers = supportsTriggers();
 
   if (useTriggers) {
@@ -261,8 +302,56 @@ function toICSDateUTC(date) {
   );
 }
 
+function nextOccurrenceForInterval(cfg) {
+  let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
+  if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
+  const now = Date.now();
+  const next = new Date(now + intervalMin * MIN);
+  next.setSeconds(0, 0);
+  return next;
+}
+
+function byDayList(daysOfWeek) {
+  if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return null;
+  const map = ['SU','MO','TU','WE','TH','FR','SA'];
+  const out = [];
+  for (let i = 0; i < 7; i++) if (daysOfWeek[i]) out.push(map[i]);
+  return out.length && out.length < 7 ? out : null; // only specify when it's a subset
+}
+
 export function buildICS(cfg, horizonDays = 60) {
-  const timestamps = buildUpcomingTimestamps(cfg, horizonDays);
+  const scheduleType = cfg?.scheduleType || 'fixed-times';
+
+  if (scheduleType === 'interval') {
+    // Use a single recurring VEVENT with RRULE
+    let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
+    if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
+
+    const byday = byDayList(cfg?.daysOfWeek);
+    const freq = (intervalMin % 60 === 0) ? 'HOURLY' : 'MINUTELY';
+    const intervalVal = (freq === 'HOURLY') ? Math.max(1, Math.floor(intervalMin / 60)) : intervalMin;
+
+    const dtstart = nextOccurrenceForInterval(cfg);
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//ClosetPrayer//Notifications//EN',
+      'CALSCALE:GREGORIAN',
+      'BEGIN:VEVENT',
+      `UID:${SCHEDULE_TAG_PREFIX}interval@closetprayer.com`,
+      `DTSTAMP:${toICSDateUTC(new Date())}`,
+      `DTSTART:${toICSDateUTC(dtstart)}`,
+      'SUMMARY:Pray',
+      'DESCRIPTION:Open Closet Prayer to see details or pick a request.',
+      `RRULE:FREQ=${freq};INTERVAL=${intervalVal}${byday ? `;BYDAY=${byday.join(',')}` : ''}`,
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ];
+    return lines.join('\r\n');
+  }
+
+  // fixed-times: enumerate occurrences (previous behavior)
+  const timestamps = buildUpcomingSchedule(cfg, { horizonDays, maxOccurrences: 256 });
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
