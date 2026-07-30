@@ -1,12 +1,6 @@
 // src/utils/backup.js
-// - Plain JSON export/import
-// - Encrypted export/import when Private Vault is enabled
-// - Advanced CSV import (AppSheet-style)
-//
-// Notes:
-// * No telemetry.
-// * CSV parser handles quoted fields and commas.
-// * Blank rows are skipped; unknown columns are passed through.
+// Plain and Private Vault-encrypted JSON backup and restore.
+// Legacy AppSheet CSV import has been removed.
 
 import { db } from '../db';
 import {
@@ -15,7 +9,7 @@ import {
   unwrapDEKFromHeader,
   decryptBackupPayload,
   isVaultEnabled,
-  isUnlocked
+  isUnlocked,
 } from './vault';
 
 // ---------------------------------------------------------------------------
@@ -33,38 +27,47 @@ export async function exportAllAsJson() {
   const payload = {
     version: 1,
     exportedAt: Date.now(),
-    data: { categories, requestors, prayers, events, journalEntries },
+    data: {
+      categories,
+      requestors,
+      prayers,
+      events,
+      journalEntries,
+    },
   };
 
   return JSON.stringify(payload, null, 2);
 }
 
 export function downloadJson(jsonText, fileName = 'closet-prayer-backup.json') {
-  const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+  const blob = new Blob([jsonText], {
+    type: 'application/json;charset=utf-8',
+  });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const anchor = document.createElement('a');
 
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
 
   setTimeout(() => {
-    document.body.removeChild(a);
+    document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
   }, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Encrypted exports
+// Encrypted export
 // ---------------------------------------------------------------------------
 export async function exportEncryptedBackup() {
   if (!isVaultEnabled()) {
     const clear = await exportAllAsJson();
+
     return {
       fileName: 'closet-prayer-backup.json',
       mime: 'application/json',
-      text: clear
+      text: clear,
     };
   }
 
@@ -75,39 +78,41 @@ export async function exportEncryptedBackup() {
   const clear = await exportAllAsJson();
   const header = exportMetaForBackup();
   const { ivB64, ctB64 } = await encryptBackupPayload(clear);
-
   const envelope = {
     header,
-    payload: { ivB64, ctB64 }
+    payload: {
+      ivB64,
+      ctB64,
+    },
   };
 
   return {
     fileName: 'closet-prayer-backup.cpe.json',
     mime: 'application/json',
-    text: JSON.stringify(envelope)
+    text: JSON.stringify(envelope),
   };
 }
 
-export function isEncryptedBackup(obj) {
-  return !!(
-    obj &&
-    obj.header &&
-    obj.payload &&
-    obj.header.type === 'cp/encrypted-backup'
+export function isEncryptedBackup(value) {
+  return Boolean(
+    value &&
+      value.header &&
+      value.payload &&
+      value.header.type === 'cp/encrypted-backup'
   );
 }
 
 // ---------------------------------------------------------------------------
 // JSON import
 // ---------------------------------------------------------------------------
-export async function importFromJsonBackup(jsonObj, mode = 'merge') {
-  const data = jsonObj?.data || {};
+export async function importFromJsonBackup(jsonObject, mode = 'merge') {
+  const data = jsonObject?.data || {};
   const {
     categories = [],
     requestors = [],
     prayers = [],
     events = [],
-    journalEntries = []
+    journalEntries = [],
   } = data;
 
   const tables = [
@@ -115,7 +120,7 @@ export async function importFromJsonBackup(jsonObj, mode = 'merge') {
     db.requestors,
     db.prayers,
     db.events,
-    db.journalEntries
+    db.journalEntries,
   ];
 
   if (mode === 'replace') {
@@ -128,21 +133,11 @@ export async function importFromJsonBackup(jsonObj, mode = 'merge') {
         db.journalEntries.clear(),
       ]);
 
-      if (categories.length) {
-        await db.categories.bulkAdd(categories);
-      }
-      if (requestors.length) {
-        await db.requestors.bulkAdd(requestors);
-      }
-      if (prayers.length) {
-        await db.prayers.bulkAdd(prayers);
-      }
-      if (events.length) {
-        await db.events.bulkAdd(events);
-      }
-      if (journalEntries.length) {
-        await db.journalEntries.bulkAdd(journalEntries);
-      }
+      if (categories.length) await db.categories.bulkAdd(categories);
+      if (requestors.length) await db.requestors.bulkAdd(requestors);
+      if (prayers.length) await db.prayers.bulkAdd(prayers);
+      if (events.length) await db.events.bulkAdd(events);
+      if (journalEntries.length) await db.journalEntries.bulkAdd(journalEntries);
     });
 
     return true;
@@ -150,14 +145,12 @@ export async function importFromJsonBackup(jsonObj, mode = 'merge') {
 
   const upsert = async (table, items) => {
     for (const item of items) {
-      if (item?.id == null) {
-        continue;
-      }
+      if (item?.id == null) continue;
 
-      const exists = await table.get(item.id);
+      const existing = await table.get(item.id);
 
-      if (exists) {
-        await table.put({ ...exists, ...item });
+      if (existing) {
+        await table.put({ ...existing, ...item });
       } else {
         await table.add(item);
       }
@@ -202,26 +195,25 @@ export async function importSmartFromFileText(fileText, options = {}) {
       secretKind,
       secret
     );
-
     const clear = await decryptBackupPayload(
       payload.ivB64,
       payload.ctB64,
       dekBytes
     );
 
-    let clearObj;
+    let clearObject;
 
     try {
-      clearObj = JSON.parse(clear);
+      clearObject = JSON.parse(clear);
     } catch {
       throw new Error('Decrypted payload is not valid JSON.');
     }
 
-    await importFromJsonBackup(clearObj, options.mode || 'merge');
+    await importFromJsonBackup(clearObject, options.mode || 'merge');
 
     return {
       encrypted: true,
-      imported: true
+      imported: true,
     };
   }
 
@@ -229,7 +221,7 @@ export async function importSmartFromFileText(fileText, options = {}) {
 
   return {
     encrypted: false,
-    imported: true
+    imported: true,
   };
 }
 
@@ -243,245 +235,6 @@ export async function exportSmartJson() {
   return {
     fileName: 'closet-prayer-backup.json',
     mime: 'application/json',
-    text: clear
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Advanced CSV import
-// ---------------------------------------------------------------------------
-function parseCsvText(text) {
-  const rows = [];
-  let index = 0;
-  let field = '';
-  let row = [];
-  let inQuotes = false;
-
-  while (index < text.length) {
-    const character = text[index];
-
-    if (inQuotes) {
-      if (character === '"') {
-        if (text[index + 1] === '"') {
-          field += '"';
-          index += 2;
-          continue;
-        }
-
-        inQuotes = false;
-        index += 1;
-        continue;
-      }
-
-      field += character;
-      index += 1;
-      continue;
-    }
-
-    if (character === '"') {
-      inQuotes = true;
-      index += 1;
-      continue;
-    }
-
-    if (character === ',') {
-      row.push(field);
-      field = '';
-      index += 1;
-      continue;
-    }
-
-    if (character === '\r') {
-      index += 1;
-      continue;
-    }
-
-    if (character === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-      index += 1;
-      continue;
-    }
-
-    field += character;
-    index += 1;
-  }
-
-  row.push(field);
-  rows.push(row);
-
-  const header = rows.shift() || [];
-  const columns = header.map((heading) => (heading || '').trim());
-  const output = [];
-
-  for (const values of rows) {
-    if (!values || values.length === 0) {
-      continue;
-    }
-
-    const item = {};
-    let empty = true;
-
-    for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
-      const key = columns[columnIndex];
-      const value = values[columnIndex] ?? '';
-
-      if (value !== '' && value != null) {
-        empty = false;
-      }
-
-      if (key) {
-        item[key] = value;
-      }
-    }
-
-    if (!empty) {
-      output.push(item);
-    }
-  }
-
-  return {
-    header: columns,
-    rows: output
-  };
-}
-
-function guessTableKind(fileName, header) {
-  const name = (fileName || '').toLowerCase();
-
-  if (name.includes('category')) {
-    return 'categories';
-  }
-  if (name.includes('requestor')) {
-    return 'requestors';
-  }
-  if (name.includes('prayer')) {
-    return 'prayers';
-  }
-
-  const normalizedHeader = header.map((heading) => heading.toLowerCase());
-
-  if (
-    normalizedHeader.includes('categoryid') &&
-    normalizedHeader.includes('name') &&
-    !normalizedHeader.includes('requestorid')
-  ) {
-    return 'categories';
-  }
-
-  if (
-    normalizedHeader.includes('requestorid') &&
-    normalizedHeader.includes('name') &&
-    !normalizedHeader.includes('prayerid')
-  ) {
-    return 'requestors';
-  }
-
-  if (
-    normalizedHeader.includes('prayerid') ||
-    normalizedHeader.includes('status') ||
-    normalizedHeader.includes('requestedat')
-  ) {
-    return 'prayers';
-  }
-
-  return 'unknown';
-}
-
-function normalizeIds(items) {
-  return items.map((item) => {
-    const output = { ...item };
-
-    ['id', 'categoryId', 'requestorId'].forEach((key) => {
-      if (output[key] === '' || output[key] == null) {
-        return;
-      }
-
-      const numericValue = Number(output[key]);
-
-      if (
-        Number.isFinite(numericValue) &&
-        String(numericValue) === String(output[key]).trim()
-      ) {
-        output[key] = numericValue;
-      }
-    });
-
-    ['showSingle', 'security'].forEach((key) => {
-      if (!(key in output)) {
-        return;
-      }
-
-      const value = String(output[key]).trim().toLowerCase();
-
-      if (['true', '1', 'yes', 'y'].includes(value)) {
-        output[key] = true;
-      } else if (['false', '0', 'no', 'n'].includes(value)) {
-        output[key] = false;
-      }
-    });
-
-    return output;
-  });
-}
-
-export async function importFromCsvBundle(files, mode = 'merge') {
-  const bucket = {
-    categories: [],
-    requestors: [],
-    prayers: []
-  };
-
-  const skipped = [];
-
-  for (const file of files) {
-    try {
-      const text = await file.text();
-      const { header, rows } = parseCsvText(text);
-      const kind = guessTableKind(file.name, header);
-
-      if (kind === 'unknown') {
-        skipped.push({
-          file: file.name,
-          reason: 'unknown kind (headers)',
-          header
-        });
-        continue;
-      }
-
-      bucket[kind].push(...normalizeIds(rows));
-    } catch (error) {
-      skipped.push({
-        file: file.name,
-        reason: error?.message || 'parse failed'
-      });
-    }
-  }
-
-  const counts = {
-    categories: bucket.categories.length,
-    requestors: bucket.requestors.length,
-    prayers: bucket.prayers.length,
-  };
-
-  const json = {
-    version: 1,
-    data: {
-      categories: bucket.categories,
-      requestors: bucket.requestors,
-      prayers: bucket.prayers,
-      events: [],
-      journalEntries: [],
-    }
-  };
-
-  await importFromJsonBackup(json, mode);
-
-  return {
-    counts,
-    skipped,
-    skippedTotal: skipped.length
+    text: clear,
   };
 }

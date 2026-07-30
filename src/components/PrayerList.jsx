@@ -1,6 +1,6 @@
 // src/components/PrayerList.jsx
 // Daily/Security list with grouped Daily view, flat Security view,
-// prayer events, add/edit controls, and PWA launch-action support.
+// prayer events, explicit detail controls, add/edit controls, and PWA actions.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
@@ -11,8 +11,10 @@ import PrayerEventForm from './PrayerEventForm';
 
 function fmt(iso) {
   if (!iso) return '';
+
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
+
   return date.toLocaleDateString();
 }
 
@@ -35,18 +37,18 @@ export default function PrayerList({
     setLoading(true);
 
     try {
-      const [cats, reqs, prs] = await Promise.all([
+      const [categoryRows, requestorRows, prayerRows] = await Promise.all([
         db.categories.toArray(),
         db.requestors.toArray(),
         db.prayers.toArray(),
       ]);
 
-      setCategories(cats);
-      setRequestors(reqs);
+      setCategories(categoryRows);
+      setRequestors(requestorRows);
 
       const filtered = isSecurity
-        ? prs.filter((prayer) => Boolean(prayer.security))
-        : prs;
+        ? prayerRows.filter((prayer) => Boolean(prayer.security))
+        : prayerRows;
 
       filtered.sort((a, b) => {
         const dateA = a.requestedAt || '';
@@ -69,6 +71,7 @@ export default function PrayerList({
 
   useEffect(() => {
     const onDbChanged = () => load();
+
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
   }, [isSecurity]);
@@ -85,15 +88,23 @@ export default function PrayerList({
     return () => window.removeEventListener('ui:addPrayer', openAddPrayer);
   }, []);
 
-  const catById = useMemo(() => {
+  const categoryById = useMemo(() => {
     const map = new Map();
-    for (const category of categories) map.set(category.id, category);
+
+    for (const category of categories) {
+      map.set(category.id, category);
+    }
+
     return map;
   }, [categories]);
 
-  const reqById = useMemo(() => {
+  const requestorById = useMemo(() => {
     const map = new Map();
-    for (const requestor of requestors) map.set(requestor.id, requestor);
+
+    for (const requestor of requestors) {
+      map.set(requestor.id, requestor);
+    }
+
     return map;
   }, [requestors]);
 
@@ -103,8 +114,10 @@ export default function PrayerList({
     const byCategory = new Map();
 
     for (const prayer of prayers) {
-      const requestor = reqById.get(prayer.requestorId);
-      const category = requestor ? catById.get(requestor.categoryId) : null;
+      const requestor = requestorById.get(prayer.requestorId);
+      const category = requestor
+        ? categoryById.get(requestor.categoryId)
+        : null;
       const categoryName = category?.name || 'Unassigned';
       const requestorId = requestor?.id ?? -1;
 
@@ -113,7 +126,11 @@ export default function PrayerList({
       }
 
       const byRequestor = byCategory.get(categoryName);
-      if (!byRequestor.has(requestorId)) byRequestor.set(requestorId, []);
+
+      if (!byRequestor.has(requestorId)) {
+        byRequestor.set(requestorId, []);
+      }
+
       byRequestor.get(requestorId).push(prayer);
     }
 
@@ -123,7 +140,8 @@ export default function PrayerList({
       const groups = [];
 
       for (const [requestorId, items] of byRequestor.entries()) {
-        const requestor = reqById.get(requestorId);
+        const requestor = requestorById.get(requestorId);
+
         groups.push({
           requestorId,
           requestorName: requestor?.name || 'Unassigned',
@@ -131,17 +149,26 @@ export default function PrayerList({
         });
       }
 
-      groups.sort((a, b) => a.requestorName.localeCompare(b.requestorName));
+      groups.sort((a, b) =>
+        a.requestorName.localeCompare(b.requestorName)
+      );
       output[categoryName] = groups;
     }
 
     return output;
-  }, [isSecurity, prayers, reqById, catById]);
+  }, [isSecurity, prayers, requestorById, categoryById]);
 
   const handleAddSuccess = async () => {
     await load();
     setShowAddForm(false);
   };
+
+  function togglePrayerDetails(prayerId) {
+    setExpanded((current) => ({
+      ...current,
+      [prayerId]: !current[prayerId],
+    }));
+  }
 
   function renderEvents(prayer) {
     return (
@@ -187,43 +214,43 @@ export default function PrayerList({
 
   function renderPrayerCard(prayer, requestorName, headingLevel = 'h4') {
     const Heading = headingLevel;
+    const isExpanded = Boolean(expanded[prayer.id]);
 
     return (
       <li key={prayer.id} className="bg-gray-800 rounded-lg p-3 shadow">
-        <div className="flex items-start justify-between">
-          <div
-            className="flex-1 cursor-pointer select-none"
-            onClick={() =>
-              setExpanded((current) => ({
-                ...current,
-                [prayer.id]: !current[prayer.id],
-              }))
-            }
-          >
-            <Heading className="text-white font-semibold">{prayer.name}</Heading>
-            <p className="text-gray-300 text-sm line-clamp-2">{prayer.description}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <Heading className="text-white font-semibold">
+              {prayer.name}
+            </Heading>
+            <p className="text-gray-300 text-sm line-clamp-2">
+              {prayer.description}
+            </p>
             <div className="text-gray-400 text-xs mt-1">
               Requestor: {requestorName} • Requested: {fmt(prayer.requestedAt)} • Status: {prayer.status}
             </div>
           </div>
 
-          <div className="ml-2 flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenSingle?.(prayer.id);
-              }}
+              onClick={() => togglePrayerDetails(prayer.id)}
+              className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+              aria-expanded={isExpanded}
+              aria-controls={`prayer-details-${prayer.id}`}
+            >
+              {isExpanded ? 'Hide details' : 'Details'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenSingle?.(prayer.id)}
               className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
             >
               Open
             </button>
             <button
               type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setEditTarget(prayer);
-              }}
+              onClick={() => setEditTarget(prayer)}
               className="text-sm px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
             >
               Edit
@@ -231,8 +258,11 @@ export default function PrayerList({
           </div>
         </div>
 
-        {expanded[prayer.id] && (
-          <div className="mt-2 text-gray-200 whitespace-pre-wrap">
+        {isExpanded && (
+          <div
+            id={`prayer-details-${prayer.id}`}
+            className="mt-2 text-gray-200 whitespace-pre-wrap"
+          >
             {prayer.description}
             {renderEvents(prayer)}
           </div>
@@ -271,7 +301,7 @@ export default function PrayerList({
 
       {loading && <p className="text-gray-400">Loading…</p>}
 
-      {!loading && !prayers.length && (
+      {!loading && prayers.length === 0 && (
         <p className="text-gray-400">No prayers found.</p>
       )}
 
@@ -279,7 +309,8 @@ export default function PrayerList({
         <section className="mb-6">
           <ul className="space-y-3">
             {prayers.map((prayer) => {
-              const requestor = reqById.get(prayer.requestorId);
+              const requestor = requestorById.get(prayer.requestorId);
+
               return renderPrayerCard(
                 prayer,
                 requestor?.name || 'Unassigned',
@@ -290,13 +321,14 @@ export default function PrayerList({
         </section>
       )}
 
-      {!loading && !isSecurity && groupedDaily &&
+      {!loading &&
+        !isSecurity &&
+        groupedDaily &&
         Object.keys(groupedDaily).map((categoryName) => (
           <section key={categoryName} className="mb-6">
             <h3 className="text-lg font-semibold text-white mb-2">
               {categoryName}
             </h3>
-
             <div className="space-y-4">
               {groupedDaily[categoryName].map((group) => (
                 <div
@@ -308,7 +340,11 @@ export default function PrayerList({
                   </h4>
                   <ul className="space-y-3">
                     {group.items.map((prayer) =>
-                      renderPrayerCard(prayer, group.requestorName, 'h5')
+                      renderPrayerCard(
+                        prayer,
+                        group.requestorName,
+                        'h5'
+                      )
                     )}
                   </ul>
                 </div>
@@ -334,7 +370,11 @@ export default function PrayerList({
             strokeWidth="2"
             aria-hidden="true"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 5v14m-7-7h14"
+            />
           </svg>
         </button>
       )}

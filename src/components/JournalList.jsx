@@ -1,6 +1,6 @@
 // src/components/JournalList.jsx
-// Personal journal list with search, Markdown rendering, add/edit controls,
-// and PWA launch-action support.
+// Personal journal list with search, Markdown rendering, explicit read controls,
+// add/edit controls, db refresh, and PWA launch-action support.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
@@ -11,8 +11,10 @@ import remarkGfm from 'remark-gfm';
 
 function fmtDateTime(iso) {
   if (!iso) return '';
+
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
+
   return date.toLocaleString();
 }
 
@@ -50,6 +52,7 @@ export default function JournalList() {
 
   useEffect(() => {
     const onDbChanged = () => load();
+
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
   }, []);
@@ -82,6 +85,13 @@ export default function JournalList() {
     await load();
     setShowAddForm(false);
   };
+
+  function toggleEntry(entryId) {
+    setExpanded((current) => ({
+      ...current,
+      [entryId]: !current[entryId],
+    }));
+  }
 
   function Markdown({ children }) {
     return (
@@ -258,37 +268,38 @@ export default function JournalList() {
                   />
                 ) : (
                   <>
-                    <div
-                      className="flex items-start justify-between cursor-pointer select-none"
-                      onClick={() =>
-                        setExpanded((current) => ({
-                          ...current,
-                          [entry.id]: !current[entry.id],
-                        }))
-                      }
-                    >
-                      <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
                         <h4 className="text-white font-semibold">
                           {entry.title || '(Untitled)'}
                         </h4>
                         <div className="text-gray-400 text-sm">
                           {fmtDateTime(entry.createdAt)}
-                          {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
-                            <> • edited {fmtDateTime(entry.updatedAt)}</>
-                          )}
+                          {entry.updatedAt &&
+                            entry.updatedAt !== entry.createdAt && (
+                              <> • edited {fmtDateTime(entry.updatedAt)}</>
+                            )}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
+                          onClick={() => toggleEntry(entry.id)}
+                          className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+                          aria-expanded={isExpanded}
+                          aria-controls={`journal-entry-${entry.id}`}
+                        >
+                          {isExpanded ? 'Collapse' : 'Read'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
                             setEditing((current) => ({
                               ...current,
                               [entry.id]: true,
-                            }));
-                          }}
+                            }))
+                          }
                           className="text-sm px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
                         >
                           Edit
@@ -305,7 +316,10 @@ export default function JournalList() {
                     )}
 
                     {isExpanded && (
-                      <div className="mt-3 text-gray-100 prose-invert">
+                      <div
+                        id={`journal-entry-${entry.id}`}
+                        className="mt-3 text-gray-100 prose-invert"
+                      >
                         <Markdown>{entry.text || '(No content)'}</Markdown>
                       </div>
                     )}
@@ -334,7 +348,11 @@ export default function JournalList() {
             strokeWidth="2"
             aria-hidden="true"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 5v14m-7-7h14"
+            />
           </svg>
         </button>
       )}

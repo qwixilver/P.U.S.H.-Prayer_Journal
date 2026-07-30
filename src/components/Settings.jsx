@@ -1,24 +1,15 @@
 // src/components/Settings.jsx
-// Full Settings page with:
-//  - Install as App (PWA): beforeinstallprompt + help instructions
-//  - Private Vault: enable/unlock/change passphrase/recovery code/idle auto-lock/lock now
-//  - Notifications & Reminders: fixed times or interval; simple/random/ordered modes; ICS export
-//  - Backup/Restore: encrypted export when vault enabled; plain JSON otherwise; encrypted import prompt
-//  - Advanced CSV Import: unlockable via hidden gesture (long-press or 7 taps)
-//  - Onboarding controls: show tutorial / reset first-run flag
-//  - About: privacy message
+// Settings page with PWA installation, Private Vault controls,
+// notifications, JSON backup/restore, onboarding, and privacy information.
+// Legacy CSV import has been removed.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { emitDbChanged, db } from '../db';
-
 import {
-  exportAllAsJson,           // used for preview counts
-  exportSmartJson,           // chooses encrypted/plain automatically
+  exportSmartJson,
   downloadJson,
-  importSmartFromFileText,   // auto-detects encrypted vs plain
-  importFromCsvBundle,       // advanced CSV import (kept/preserved)
+  importSmartFromFileText,
 } from '../utils/backup';
-
 import {
   loadNotificationConfig,
   saveNotificationConfig,
@@ -28,110 +19,183 @@ import {
   buildICS,
   downloadICS,
 } from '../utils/notifications';
-
 import {
-  isVaultEnabled, isUnlocked, enableVaultFirstTime, unlockWithPassphrase,
-  unlockWithRecoveryCode, changePassphrase, regenerateRecoveryCode,
-  lockNow, setIdleMinutes, getIdleMinutes
+  isVaultEnabled,
+  isUnlocked,
+  enableVaultFirstTime,
+  unlockWithPassphrase,
+  unlockWithRecoveryCode,
+  changePassphrase,
+  regenerateRecoveryCode,
+  lockNow,
+  setIdleMinutes,
+  getIdleMinutes,
 } from '../utils/vault';
 
-// -------------------- Constants --------------------
-const UNLOCK_KEY = 'pj_unlockCsvImport';
-
-const DEFAULT_NOTIF_CFG = {
+const DEFAULT_NOTIFICATION_CONFIG = {
   enabled: false,
-  mode: 'simple',                 // 'simple' | 'random' | 'ordered-category' | 'ordered-requestor'
-  scheduleType: 'fixed-times',    // 'fixed-times' | 'interval'
-  times: ['08:00', '20:00'],      // fixed-times mode
-  intervalMinutes: 60,            // interval mode
-  daysOfWeek: [true, true, true, true, true, true, true], // Sun..Sat
+  mode: 'simple',
+  scheduleType: 'fixed-times',
+  times: ['08:00', '20:00'],
+  intervalMinutes: 60,
+  daysOfWeek: [true, true, true, true, true, true, true],
   categoryId: null,
   requestorId: null,
 };
 
-// -------------------- Small helpers --------------------
 function isStandalone() {
-  const mql = window.matchMedia ? window.matchMedia('(display-mode: standalone)') : { matches: false };
-  return (window.navigator && (window.navigator.standalone === true)) || mql.matches;
+  const displayMode = window.matchMedia
+    ? window.matchMedia('(display-mode: standalone)')
+    : { matches: false };
+
+  return Boolean(window.navigator?.standalone === true || displayMode.matches);
 }
 
-// ============================================================================
-// Component
-// ============================================================================
+function isIOS() {
+  if (typeof navigator === 'undefined') return false;
+
+  return Boolean(
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.userAgent.includes('Mac') && 'ontouchend' in window)
+  );
+}
+
 export default function Settings() {
-  // ===== PWA Install =====
+  // -------------------------------------------------------------------------
+  // Install as App
+  // -------------------------------------------------------------------------
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
-  const [installMsg, setInstallMsg] = useState('');
+  const [installMessage, setInstallMessage] = useState('');
   const [installed, setInstalled] = useState(isStandalone());
   const [showInstallHelp, setShowInstallHelp] = useState(false);
 
   useEffect(() => {
-    function onBeforeInstallPrompt(e) {
-      e.preventDefault?.();
-      setInstallPromptEvent(e);
-      setInstallMsg('App install is available.');
+    function onBeforeInstallPrompt(event) {
+      event.preventDefault?.();
+      setInstallPromptEvent(event);
+      setInstallMessage('App installation is available on this device.');
     }
+
     function onAppInstalled() {
       setInstalled(true);
       setInstallPromptEvent(null);
-      setInstallMsg('App installed.');
+      setInstallMessage('App installed.');
     }
+
     window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
     window.addEventListener('appinstalled', onAppInstalled);
 
-    const mql = window.matchMedia?.('(display-mode: standalone)');
-    const dmHandler = () => setInstalled(isStandalone());
-    mql?.addEventListener?.('change', dmHandler);
+    const displayMode = window.matchMedia?.('(display-mode: standalone)');
+    const onDisplayModeChange = () => setInstalled(isStandalone());
+
+    displayMode?.addEventListener?.('change', onDisplayModeChange);
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+      window.removeEventListener(
+        'beforeinstallprompt',
+        onBeforeInstallPrompt
+      );
       window.removeEventListener('appinstalled', onAppInstalled);
-      mql?.removeEventListener?.('change', dmHandler);
+      displayMode?.removeEventListener?.('change', onDisplayModeChange);
     };
   }, []);
 
   async function handleInstallClick() {
     try {
-      setInstallMsg('');
-      const ev = installPromptEvent;
-      if (!ev) {
+      setInstallMessage('');
+
+      if (!installPromptEvent) {
         setShowInstallHelp(true);
         return;
       }
-      ev.prompt?.();
-      const choice = await ev.userChoice;
-      setInstallMsg(choice?.outcome === 'accepted' ? 'Install accepted. Check your home screen / app list.' : 'Install dismissed.');
+
+      installPromptEvent.prompt?.();
+      const choice = await installPromptEvent.userChoice;
+
+      setInstallMessage(
+        choice?.outcome === 'accepted'
+          ? 'Install accepted. Check your Home Screen or app list.'
+          : 'Install dismissed.'
+      );
       setInstallPromptEvent(null);
-    } catch (e) {
-      setInstallMsg(e?.message || 'Could not trigger install.');
+    } catch (error) {
+      setInstallMessage(error?.message || 'Could not start installation.');
     }
   }
 
-  // ===== Notifications =====
-  const [notifMsg, setNotifMsg] = useState('');
-  const [notifBusy, setNotifBusy] = useState(false);
-  const [notifCfg, setNotifCfg] = useState(() => ({ ...DEFAULT_NOTIF_CFG, ...(loadNotificationConfig() || {}) }));
-  const [perm, setPerm] = useState(() => (typeof Notification !== 'undefined' ? Notification.permission : 'denied'));
+  // -------------------------------------------------------------------------
+  // Notifications
+  // -------------------------------------------------------------------------
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationConfig, setNotificationConfig] = useState(() => ({
+    ...DEFAULT_NOTIFICATION_CONFIG,
+    ...(loadNotificationConfig() || {}),
+  }));
+  const [notificationPermission, setNotificationPermission] = useState(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  );
   const [categories, setCategories] = useState([]);
   const [requestors, setRequestors] = useState([]);
 
   useEffect(() => {
-    (async () => {
-      const cats = await db.categories.toArray();
-      cats.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
-      setCategories(cats);
-      const reqs = await db.requestors.toArray();
-      reqs.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
-      setRequestors(reqs);
-    })();
+    let cancelled = false;
+
+    async function loadNotificationOptions() {
+      try {
+        const [categoryRows, requestorRows] = await Promise.all([
+          db.categories.toArray(),
+          db.requestors.toArray(),
+        ]);
+
+        categoryRows.sort((a, b) =>
+          (a.name || '').localeCompare(b.name || '')
+        );
+        requestorRows.sort((a, b) =>
+          (a.name || '').localeCompare(b.name || '')
+        );
+
+        if (!cancelled) {
+          setCategories(categoryRows);
+          setRequestors(requestorRows);
+        }
+      } catch (error) {
+        console.error('Could not load notification options:', error);
+      }
+    }
+
+    loadNotificationOptions();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function updateNotifCfg(patch) {
-    setNotifCfg(prev => {
-      const next = { ...prev, ...patch };
-      if (!Array.isArray(next.times) || !next.times.length) next.times = ['08:00'];
-      if (!Array.isArray(next.daysOfWeek) || next.daysOfWeek.length !== 7) next.daysOfWeek = [true,true,true,true,true,true,true];
-      if (!Number.isFinite(Number(next.intervalMinutes)) || next.intervalMinutes < 5) next.intervalMinutes = 60;
+  function updateNotificationConfig(patch) {
+    setNotificationConfig((current) => {
+      const next = {
+        ...current,
+        ...patch,
+      };
+
+      if (!Array.isArray(next.times) || next.times.length === 0) {
+        next.times = ['08:00'];
+      }
+
+      if (
+        !Array.isArray(next.daysOfWeek) ||
+        next.daysOfWeek.length !== 7
+      ) {
+        next.daysOfWeek = [true, true, true, true, true, true, true];
+      }
+
+      if (
+        !Number.isFinite(Number(next.intervalMinutes)) ||
+        Number(next.intervalMinutes) < 5
+      ) {
+        next.intervalMinutes = 60;
+      }
+
       saveNotificationConfig(next);
       return next;
     });
@@ -139,393 +203,551 @@ export default function Settings() {
 
   async function handleTestNotification() {
     try {
-      setNotifBusy(true);
-      setNotifMsg('');
+      setNotificationBusy(true);
+      setNotificationMessage('');
       await ensurePermission();
+
       if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        await reg.showNotification('Closet Prayer — Test', {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification('Closet Prayer — Test', {
           body: 'This is a test notification.',
           tag: 'cp:test',
         });
       } else {
-        new Notification('Closet Prayer — Test', { body: 'This is a test notification.' });
+        new Notification('Closet Prayer — Test', {
+          body: 'This is a test notification.',
+        });
       }
-      setPerm(Notification.permission);
-      setNotifMsg('Test notification sent.');
-    } catch (e) {
-      setNotifMsg(e?.message || 'Unable to show notification.');
+
+      setNotificationPermission(Notification.permission);
+      setNotificationMessage('Test notification sent.');
+    } catch (error) {
+      setNotificationMessage(
+        error?.message || 'Unable to show a notification.'
+      );
     } finally {
-      setNotifBusy(false);
+      setNotificationBusy(false);
     }
   }
 
   async function handleSaveAndSchedule() {
     try {
-      setNotifBusy(true);
-      setNotifMsg('');
-      if (!notifCfg.enabled) {
+      setNotificationBusy(true);
+      setNotificationMessage('');
+
+      if (!notificationConfig.enabled) {
         await clearScheduledNotifications();
-        setNotifMsg('Notifications are disabled. Nothing scheduled.');
+        setNotificationMessage(
+          'Notifications are disabled. Existing local schedules were cleared.'
+        );
         return;
       }
-      if (notifCfg.scheduleType === 'interval') {
-        const m = parseInt(notifCfg.intervalMinutes, 10);
-        if (!Number.isFinite(m) || m < 5) {
-          setNotifMsg('Please choose an interval of at least 5 minutes.');
+
+      if (notificationConfig.scheduleType === 'interval') {
+        const interval = Number.parseInt(
+          notificationConfig.intervalMinutes,
+          10
+        );
+
+        if (!Number.isFinite(interval) || interval < 5) {
+          setNotificationMessage(
+            'Choose an interval of at least 5 minutes.'
+          );
           return;
         }
       }
+
+      if (!notificationConfig.daysOfWeek.some(Boolean)) {
+        setNotificationMessage('Select at least one day of the week.');
+        return;
+      }
+
+      if (
+        notificationConfig.mode === 'ordered-category' &&
+        !notificationConfig.categoryId
+      ) {
+        setNotificationMessage('Choose a category for the ordered cycle.');
+        return;
+      }
+
+      if (
+        notificationConfig.mode === 'ordered-requestor' &&
+        !notificationConfig.requestorId
+      ) {
+        setNotificationMessage('Choose a requestor for the ordered cycle.');
+        return;
+      }
+
       await ensurePermission();
-      await scheduleNotifications(notifCfg);
-      setPerm(Notification.permission);
-      setNotifMsg('Notifications scheduled (next 14 days). For maximum reliability, you can also export an .ics.');
-    } catch (e) {
-      setNotifMsg(e?.message || 'Failed to schedule.');
+      await scheduleNotifications(notificationConfig);
+      setNotificationPermission(Notification.permission);
+      setNotificationMessage(
+        'Notification settings saved and the local schedule was refreshed.'
+      );
+    } catch (error) {
+      setNotificationMessage(error?.message || 'Failed to schedule reminders.');
     } finally {
-      setNotifBusy(false);
+      setNotificationBusy(false);
     }
   }
 
   async function handleClearScheduled() {
     try {
-      setNotifBusy(true);
-      setNotifMsg('');
+      setNotificationBusy(true);
+      setNotificationMessage('');
       await clearScheduledNotifications();
-      setNotifMsg('Cleared any scheduled notifications (best effort).');
-    } catch (e) {
-      setNotifMsg(e?.message || 'Failed to clear.');
+      setNotificationMessage('Scheduled notifications cleared.');
+    } catch (error) {
+      setNotificationMessage(
+        error?.message || 'Failed to clear scheduled notifications.'
+      );
     } finally {
-      setNotifBusy(false);
+      setNotificationBusy(false);
     }
   }
 
-  function handleExportICS() {
+  function handleExportCalendar() {
     try {
-      const ics = buildICS(notifCfg, 60);
-      downloadICS(ics);
-      setNotifMsg('.ics calendar exported.');
-    } catch (e) {
-      setNotifMsg(e?.message || 'Failed to create .ics file.');
+      const calendarText = buildICS(notificationConfig, 60);
+      downloadICS(calendarText);
+      setNotificationMessage('Calendar reminder file exported.');
+    } catch (error) {
+      setNotificationMessage(
+        error?.message || 'Failed to create the calendar file.'
+      );
     }
   }
 
-  // ===== Private Vault =====
+  // -------------------------------------------------------------------------
+  // Private Vault
+  // -------------------------------------------------------------------------
   const [vaultEnabled, setVaultEnabled] = useState(isVaultEnabled());
   const [vaultUnlocked, setVaultUnlocked] = useState(isUnlocked());
-  const [vaultMsg, setVaultMsg] = useState('');
-  const [idleMin, setIdleMinState] = useState(getIdleMinutes());
-  const [showRecovery, setShowRecovery] = useState(false);
-  const [generatedRecovery, setGeneratedRecovery] = useState('');
+  const [vaultMessage, setVaultMessage] = useState('');
+  const [idleMinutes, setIdleMinutesState] = useState(getIdleMinutes());
+  const [showRecoveryCode, setShowRecoveryCode] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
 
   function syncVaultState() {
     setVaultEnabled(isVaultEnabled());
     setVaultUnlocked(isUnlocked());
   }
 
-  async function onEnableVault() {
-    const pass = prompt('Create a passphrase (min 8 chars). Do NOT forget it.');
-    if (!pass) return;
+  async function handleEnableVault() {
+    const accepted = window.confirm(
+      'Private Vault warning:\n\nIf you forget both your passphrase and Recovery Code, encrypted data cannot be recovered. Continue only if you are prepared to store the Recovery Code safely.'
+    );
+
+    if (!accepted) return;
+
+    const passphrase = window.prompt(
+      'Create a Private Vault passphrase with at least 8 characters:'
+    );
+
+    if (!passphrase) return;
+
+    const confirmation = window.prompt('Enter the passphrase again:');
+
+    if (confirmation !== passphrase) {
+      setVaultMessage('Passphrases did not match. The vault was not enabled.');
+      return;
+    }
+
     try {
-      const { recoveryCode } = await enableVaultFirstTime(pass);
-      setVaultMsg('Vault enabled and unlocked for this session.');
-      setShowRecovery(true);
-      setGeneratedRecovery(recoveryCode);
+      const result = await enableVaultFirstTime(passphrase);
+      setRecoveryCode(result.recoveryCode);
+      setShowRecoveryCode(true);
+      setVaultMessage(
+        'Vault enabled and unlocked for this session. Save the Recovery Code now.'
+      );
       syncVaultState();
-    } catch (e) { setVaultMsg(e?.message || 'Failed to enable vault.'); }
+    } catch (error) {
+      setVaultMessage(error?.message || 'Failed to enable the vault.');
+    }
   }
 
-  async function onUnlock() {
-    const pass = prompt('Enter your vault passphrase:');
-    if (!pass) return;
-    try { await unlockWithPassphrase(pass); setVaultMsg('Unlocked.'); syncVaultState(); }
-    catch (e) { setVaultMsg(e?.message || 'Wrong passphrase.'); }
-  }
+  async function handleUnlockWithPassphrase() {
+    const passphrase = window.prompt('Enter your Private Vault passphrase:');
 
-  async function onUnlockWithRecovery() {
-    const code = prompt('Enter your Recovery Code (format XXXX-XXXX-...):');
-    if (!code) return;
-    try { await unlockWithRecoveryCode(code); setVaultMsg('Unlocked with Recovery Code.'); syncVaultState(); }
-    catch (e) { setVaultMsg(e?.message || 'Could not unlock with Recovery Code.'); }
-  }
+    if (!passphrase) return;
 
-  async function onChangePass() {
-    const oldPass = prompt('Current passphrase:');
-    if (!oldPass) return;
-    const newPass = prompt('New passphrase (min 8 chars):');
-    if (!newPass) return;
-    try { await changePassphrase(oldPass, newPass); setVaultMsg('Passphrase updated.'); }
-    catch (e) { setVaultMsg(e?.message || 'Failed to change passphrase.'); }
-  }
-
-  async function onRegenRecovery() {
     try {
-      if (!vaultUnlocked) { setVaultMsg('Unlock first to regenerate the Recovery Code.'); return; }
-      const { recoveryCode } = await regenerateRecoveryCode();
-      setGeneratedRecovery(recoveryCode);
-      setShowRecovery(true);
-      setVaultMsg('New Recovery Code generated. Store it safely.');
-    } catch (e) { setVaultMsg(e?.message || 'Failed to regenerate Recovery Code.'); }
+      await unlockWithPassphrase(passphrase);
+      setVaultMessage('Vault unlocked for this session.');
+      syncVaultState();
+    } catch (error) {
+      setVaultMessage(error?.message || 'Wrong passphrase.');
+    }
   }
 
-  function onLockNow() { lockNow(); setVaultMsg('Locked.'); syncVaultState(); }
+  async function handleUnlockWithRecoveryCode() {
+    const code = window.prompt('Enter your Recovery Code:');
 
-  function onIdleChange(v) {
-    const n = Math.max(1, parseInt(v || '0', 10));
-    setIdleMinState(n);
-    setIdleMinutes(n);
+    if (!code) return;
+
+    try {
+      await unlockWithRecoveryCode(code);
+      setVaultMessage('Vault unlocked with the Recovery Code.');
+      syncVaultState();
+    } catch (error) {
+      setVaultMessage(
+        error?.message || 'The Recovery Code could not unlock the vault.'
+      );
+    }
   }
 
-  // ===== Backup/Restore =====
-  const jsonFileRef = useRef(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const [jsonPreview, setJsonPreview] = useState(null);
+  async function handleChangePassphrase() {
+    const currentPassphrase = window.prompt('Enter the current passphrase:');
+    if (!currentPassphrase) return;
 
-  function parseJsonForPreview(text, fileName = 'backup.json') {
+    const newPassphrase = window.prompt(
+      'Enter a new passphrase with at least 8 characters:'
+    );
+    if (!newPassphrase) return;
+
+    const confirmation = window.prompt('Enter the new passphrase again:');
+
+    if (confirmation !== newPassphrase) {
+      setVaultMessage('New passphrases did not match. No change was made.');
+      return;
+    }
+
+    try {
+      await changePassphrase(currentPassphrase, newPassphrase);
+      setVaultMessage('Vault passphrase changed.');
+      syncVaultState();
+    } catch (error) {
+      setVaultMessage(error?.message || 'Failed to change the passphrase.');
+    }
+  }
+
+  async function handleRegenerateRecoveryCode() {
+    if (!vaultUnlocked) {
+      setVaultMessage('Unlock the vault before regenerating the Recovery Code.');
+      return;
+    }
+
+    const accepted = window.confirm(
+      'Regenerating the Recovery Code permanently invalidates the old code. Continue?'
+    );
+
+    if (!accepted) return;
+
+    try {
+      const result = await regenerateRecoveryCode();
+      setRecoveryCode(result.recoveryCode);
+      setShowRecoveryCode(true);
+      setVaultMessage(
+        'A new Recovery Code was generated. Replace every stored copy of the old code.'
+      );
+    } catch (error) {
+      setVaultMessage(
+        error?.message || 'Failed to regenerate the Recovery Code.'
+      );
+    }
+  }
+
+  function handleLockNow() {
+    lockNow();
+    setRecoveryCode('');
+    setShowRecoveryCode(false);
+    setVaultMessage('Vault locked.');
+    syncVaultState();
+  }
+
+  function handleIdleMinutesChange(value) {
+    const parsed = Number.parseInt(value || '0', 10);
+    const next = Math.max(1, Number.isFinite(parsed) ? parsed : 1);
+
+    setIdleMinutesState(next);
+    setIdleMinutes(next);
+  }
+
+  async function handleCopyRecoveryCode() {
+    if (!recoveryCode) return;
+
+    try {
+      await navigator.clipboard.writeText(recoveryCode);
+      setVaultMessage('Recovery Code copied. Store it somewhere safe and offline.');
+    } catch {
+      setVaultMessage(
+        'The browser could not copy the code. Select it and copy it manually.'
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Backup and Restore
+  // -------------------------------------------------------------------------
+  const backupFileRef = useRef(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [backupPreview, setBackupPreview] = useState(null);
+
+  function parseBackupPreview(text, fileName = 'backup.json') {
     try {
       const parsed = JSON.parse(text);
+
       if (parsed?.header?.type === 'cp/encrypted-backup') {
-        return { fileName, encrypted: true, counts: null, valid: true, raw: parsed };
+        return {
+          fileName,
+          encrypted: true,
+          counts: null,
+          valid: true,
+          raw: parsed,
+        };
       }
+
       const data = parsed?.data || parsed || {};
       const counts = {
         categories: Array.isArray(data.categories) ? data.categories.length : 0,
         requestors: Array.isArray(data.requestors) ? data.requestors.length : 0,
         prayers: Array.isArray(data.prayers) ? data.prayers.length : 0,
         events: Array.isArray(data.events) ? data.events.length : 0,
-        journalEntries: Array.isArray(data.journalEntries) ? data.journalEntries.length : 0,
+        journalEntries: Array.isArray(data.journalEntries)
+          ? data.journalEntries.length
+          : 0,
       };
-      return { fileName, encrypted: false, counts, valid: true, raw: parsed };
-    } catch (e) {
-      return { fileName, counts: null, valid: false, error: e?.message || 'Invalid JSON', raw: null };
+
+      return {
+        fileName,
+        encrypted: false,
+        counts,
+        valid: true,
+        raw: parsed,
+      };
+    } catch (error) {
+      return {
+        fileName,
+        encrypted: false,
+        counts: null,
+        valid: false,
+        error: error?.message || 'Invalid JSON',
+        raw: null,
+      };
     }
   }
 
-  async function handleExportJson() {
+  function resetBackupFileInput() {
+    if (backupFileRef.current) {
+      backupFileRef.current.value = '';
+    }
+  }
+
+  async function handleExportBackup() {
     try {
-      setBusy(true);
-      setMessage('');
-      setJsonPreview(null);
-      const out = await exportSmartJson();
-      downloadJson(out.text, out.fileName);
-      setMessage(vaultEnabled ? 'Encrypted backup exported.' : 'Backup exported as JSON.');
-    } catch (e) {
-      console.error(e);
-      setMessage(e?.message || 'Export failed.');
+      setBackupBusy(true);
+      setBackupMessage('');
+      setBackupPreview(null);
+
+      const result = await exportSmartJson();
+      downloadJson(result.text, result.fileName);
+      setBackupMessage(
+        vaultEnabled
+          ? 'Encrypted backup exported.'
+          : 'Backup exported as JSON.'
+      );
+    } catch (error) {
+      console.error(error);
+      setBackupMessage(error?.message || 'Backup export failed.');
     } finally {
-      setBusy(false);
+      setBackupBusy(false);
     }
   }
 
-  async function handleJsonFileChange(e) {
-    setMessage('');
-    const file = e.target?.files?.[0];
-    if (!file) { setJsonPreview(null); return; }
-    try {
-      const text = await file.text();
-      const preview = parseJsonForPreview(text, file.name);
-      setJsonPreview(preview);
-      if (!preview.valid) {
-        setMessage(`Could not read file: ${preview.error}`);
-      } else if (!preview.encrypted) {
-        setMessage(
-          `Loaded ${preview.fileName}: ` +
-          `${preview.counts.categories} categories, ` +
-          `${preview.counts.requestors} requestors, ` +
-          `${preview.counts.prayers} prayers, ` +
-          `${preview.counts.events} events, ` +
-          `${preview.counts.journalEntries} journal entries.`
-        );
-      } else {
-        setMessage(`Encrypted backup detected: ${preview.fileName}`);
-      }
-    } catch (err) {
-      console.error(err);
-      setJsonPreview(null);
-      setMessage('Failed to read file.');
-    }
-  }
+  async function handleBackupFileChange(event) {
+    setBackupMessage('');
 
-  async function importJson(mode) {
-    if (!jsonPreview?.valid || !jsonPreview?.raw) {
-      setMessage('Choose a valid file first.');
+    const file = event.target?.files?.[0];
+
+    if (!file) {
+      setBackupPreview(null);
       return;
     }
+
     try {
-      setBusy(true);
-      setMessage('');
-      if (jsonPreview.encrypted) {
-        const choice = prompt('Encrypted backup. Type "pass" to use passphrase or "recovery" to use Recovery Code:');
-        if (!choice) { setBusy(false); return; }
-        if (choice !== 'pass' && choice !== 'recovery') { setBusy(false); setMessage('Cancelled.'); return; }
-        const secret = prompt(choice === 'pass' ? 'Enter passphrase:' : 'Enter Recovery Code:');
-        if (!secret) { setBusy(false); return; }
-        await importSmartFromFileText(JSON.stringify(jsonPreview.raw), {
-          mode,
-          secretKind: choice === 'pass' ? 'passphrase' : 'recovery',
-          secret
-        });
+      const text = await file.text();
+      const preview = parseBackupPreview(text, file.name);
+      setBackupPreview(preview);
+
+      if (!preview.valid) {
+        setBackupMessage(`Could not read backup: ${preview.error}`);
+      } else if (preview.encrypted) {
+        setBackupMessage(`Encrypted backup detected: ${preview.fileName}`);
       } else {
-        await importSmartFromFileText(JSON.stringify(jsonPreview.raw), { mode });
+        setBackupMessage(
+          `Loaded ${preview.fileName}: ` +
+            `${preview.counts.categories} categories, ` +
+            `${preview.counts.requestors} requestors, ` +
+            `${preview.counts.prayers} prayers, ` +
+            `${preview.counts.events} events, ` +
+            `${preview.counts.journalEntries} journal entries.`
+        );
       }
-      emitDbChanged();
-      setMessage(`Import (${mode}) complete.`);
-      setJsonPreview(null);
-      if (jsonFileRef.current) jsonFileRef.current.value = '';
-    } catch (e) {
-      console.error(e);
-      setMessage(`Import (${mode}) failed. ${e?.message || ''}`);
-    } finally {
-      setBusy(false);
+    } catch (error) {
+      console.error(error);
+      setBackupPreview(null);
+      setBackupMessage('Failed to read the selected backup file.');
     }
   }
 
-  // ===== Advanced CSV (unlockable) =====
-  const [advancedVisible, setAdvancedVisible] = useState(false);
-  const [csvFiles, setCsvFiles] = useState({ categories: null, requestors: null, prayers: null });
-  const tapCountRef = useRef(0);
-  const tapWindowTimerRef = useRef(null);
-  const longPressTimerRef = useRef(null);
-
-  useEffect(() => {
-    if (localStorage.getItem(UNLOCK_KEY) === '1') setAdvancedVisible(true);
-    if ((window.location.hash || '') === '#unlock-csv') setAdvancedVisible(true);
-  }, []);
-  useEffect(() => {
-    if (advancedVisible) localStorage.setItem(UNLOCK_KEY, '1');
-    else localStorage.removeItem(UNLOCK_KEY);
-  }, [advancedVisible]);
-
-  function beginLongPress() {
-    clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = setTimeout(() => {
-      setAdvancedVisible(true);
-      setMessage('Advanced CSV import unlocked.');
-    }, 1500);
-  }
-  function endLongPress() { clearTimeout(longPressTimerRef.current); }
-  function handleUnlockTap() {
-    tapCountRef.current += 1;
-    if (!tapWindowTimerRef.current) {
-      tapWindowTimerRef.current = setTimeout(() => {
-        tapCountRef.current = 0;
-        tapWindowTimerRef.current = null;
-      }, 5000);
+  async function handleImportBackup(mode) {
+    if (!backupPreview?.valid || !backupPreview?.raw) {
+      setBackupMessage('Choose a valid backup file first.');
+      return;
     }
-    if (tapCountRef.current >= 7) {
-      setAdvancedVisible(true);
-      setMessage('Advanced CSV import unlocked.');
-      clearTimeout(tapWindowTimerRef.current);
-      tapWindowTimerRef.current = null;
-      tapCountRef.current = 0;
-    }
-  }
-  function setCsv(kind, file) { setCsvFiles(s => ({ ...s, [kind]: file || null })); }
 
-  async function importCsv(mode) {
+    if (
+      mode === 'replace' &&
+      !window.confirm(
+        'Replace will erase all current app data before importing this backup. Continue?'
+      )
+    ) {
+      return;
+    }
+
     try {
-      setBusy(true);
-      setMessage('');
-      const files = [];
-      if (csvFiles.categories) files.push(csvFiles.categories);
-      if (csvFiles.requestors) files.push(csvFiles.requestors);
-      if (csvFiles.prayers) files.push(csvFiles.prayers);
-      if (!files.length) { setMessage('Select at least one CSV file to import.'); return; }
-      const res = await importFromCsvBundle(files, mode);
+      setBackupBusy(true);
+      setBackupMessage('');
+
+      if (backupPreview.encrypted) {
+        const method = window.prompt(
+          'Encrypted backup detected. Type "pass" to use the passphrase or "recovery" to use the Recovery Code:'
+        );
+
+        if (!method) return;
+
+        const normalizedMethod = method.trim().toLowerCase();
+
+        if (normalizedMethod !== 'pass' && normalizedMethod !== 'recovery') {
+          setBackupMessage('Import cancelled: unknown unlock method.');
+          return;
+        }
+
+        const secret = window.prompt(
+          normalizedMethod === 'pass'
+            ? 'Enter the backup passphrase:'
+            : 'Enter the backup Recovery Code:'
+        );
+
+        if (!secret) return;
+
+        await importSmartFromFileText(
+          JSON.stringify(backupPreview.raw),
+          {
+            mode,
+            secretKind:
+              normalizedMethod === 'pass' ? 'passphrase' : 'recovery',
+            secret,
+          }
+        );
+      } else {
+        await importSmartFromFileText(
+          JSON.stringify(backupPreview.raw),
+          { mode }
+        );
+      }
+
       emitDbChanged();
-      const parts = [];
-      if (res?.counts) {
-        const { categories = 0, requestors = 0, prayers = 0 } = res.counts;
-        parts.push(`Imported: ${categories} categories, ${requestors} requestors, ${prayers} prayers.`);
-      }
-      if (res?.skippedTotal) {
-        parts.push(`Skipped: ${res.skippedTotal} rows (see console for details).`);
-        console.log('CSV skipped diagnostics:', res?.skipped);
-      }
-      setMessage(parts.join(' '));
-      setCsvFiles({ categories: null, requestors: null, prayers: null });
-    } catch (e) {
-      console.error(e);
-      setMessage(`CSV import failed. ${e?.message || ''}`);
+      setBackupMessage(`Import (${mode}) complete.`);
+      setBackupPreview(null);
+      resetBackupFileInput();
+    } catch (error) {
+      console.error(error);
+      setBackupMessage(
+        `Import (${mode}) failed. ${error?.message || ''}`.trim()
+      );
     } finally {
-      setBusy(false);
+      setBackupBusy(false);
     }
   }
 
-  // ========================================================================
-  // Render
-  // ========================================================================
   return (
     <div className="relative overflow-y-auto p-4 pb-24">
       <h2 className="text-2xl font-bold mb-4">Settings</h2>
 
-      {/* ===== Install as App (NEW) ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow space-y-3 mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-white">Install as App</h3>
           {installed && (
-            <span className="text-xs px-2 py-1 rounded bg-emerald-700 text-white">Installed</span>
+            <span className="text-xs px-2 py-1 rounded bg-emerald-700 text-white">
+              Installed
+            </span>
           )}
         </div>
 
         {!installed && (
           <div className="flex flex-wrap gap-2">
             <button
+              type="button"
               className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
               onClick={handleInstallClick}
-              title="Add Closet Prayer to your home screen or apps list"
             >
               Install app
             </button>
             <button
+              type="button"
               className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
-              onClick={() => setShowInstallHelp(v => !v)}
+              onClick={() => setShowInstallHelp((current) => !current)}
             >
               {showInstallHelp ? 'Hide help' : 'How to install on this device'}
             </button>
           </div>
         )}
 
-        {installMsg && <p className="text-gray-300 text-sm">{installMsg}</p>}
+        {installMessage && (
+          <p className="text-gray-300 text-sm">{installMessage}</p>
+        )}
 
         {showInstallHelp && !installed && (
-          <div className="mt-2 bg-gray-900 rounded p-3 text-sm text-gray-200 space-y-2">
-            <p className="font-semibold">iPhone / iPad (Safari):</p>
-            <ol className="list-decimal list-inside space-y-1">
-              <li>Open this site in <span className="font-medium">Safari</span>.</li>
-              <li>Tap the <span className="font-medium">Share</span> button (square with an up arrow).</li>
-              <li>Choose <span className="font-medium">Add to Home Screen</span>.</li>
-              <li>Confirm the name and tap <span className="font-medium">Add</span>.</li>
-            </ol>
-            <p className="text-xs text-gray-400">
-              Note: iOS doesn’t show the install prompt button; installing is done from the Share menu.
-            </p>
-
-            <p className="font-semibold mt-3">Android (Chrome/Edge) or Desktop (Chromium-based):</p>
-            <ol className="list-decimal list-inside space-y-1">
-              <li>Use <span className="font-medium">Chrome</span>, <span className="font-medium">Edge</span>, or another Chromium-based browser.</li>
-              <li>If the <span className="font-medium">Install app</span> button isn’t available:
-                <ul className="list-disc list-inside ml-5">
-                  <li>On Android: open the browser menu and choose <span className="font-medium">Add to Home screen</span> or <span className="font-medium">Install app</span>.</li>
-                  <li>On Desktop: check the address bar for an <span className="font-medium">Install</span> icon or use the browser menu.</li>
-                </ul>
-              </li>
-            </ol>
+          <div className="bg-gray-900 rounded p-3 text-sm text-gray-200 space-y-3">
+            {isIOS() ? (
+              <>
+                <div>
+                  <p className="font-semibold">iPhone or iPad:</p>
+                  <ol className="list-decimal list-inside space-y-1 mt-1">
+                    <li>Open Closet Prayer in Safari.</li>
+                    <li>Tap Safari’s Share button.</li>
+                    <li>Choose Add to Home Screen.</li>
+                    <li>Tap Add.</li>
+                  </ol>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Apple does not expose the programmatic install prompt used by
+                  Chromium browsers, so the Share menu is required.
+                </p>
+              </>
+            ) : (
+              <div>
+                <p className="font-semibold">Android or desktop:</p>
+                <ol className="list-decimal list-inside space-y-1 mt-1">
+                  <li>Open the browser menu or address-bar install control.</li>
+                  <li>Choose Install app or Add to Home Screen.</li>
+                  <li>Confirm the installation.</li>
+                </ol>
+              </div>
+            )}
           </div>
         )}
       </section>
 
-      {/* ===== Private Vault ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow space-y-3 mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-white">Private Vault</h3>
-          <div className="flex items-center gap-2 text-xs">
-            <span className={`px-2 py-1 rounded ${vaultEnabled ? 'bg-emerald-700' : 'bg-gray-700'} text-white`}>
+          <div className="flex flex-wrap justify-end gap-2 text-xs">
+            <span
+              className={`px-2 py-1 rounded text-white ${
+                vaultEnabled ? 'bg-emerald-700' : 'bg-gray-700'
+              }`}
+            >
               {vaultEnabled ? 'Enabled' : 'Disabled'}
             </span>
             {vaultEnabled && (
-              <span className={`px-2 py-1 rounded ${vaultUnlocked ? 'bg-emerald-700' : 'bg-amber-700'} text-white`}>
+              <span
+                className={`px-2 py-1 rounded text-white ${
+                  vaultUnlocked ? 'bg-emerald-700' : 'bg-amber-700'
+                }`}
+              >
                 {vaultUnlocked ? 'Unlocked' : 'Locked'}
               </span>
             )}
@@ -535,10 +757,15 @@ export default function Settings() {
         {!vaultEnabled ? (
           <>
             <p className="text-gray-300 text-sm">
-              Protect sensitive entries with strong encryption. You’ll unlock once per session. If you forget your
-              passphrase and Recovery Code, your encrypted data is unrecoverable.
+              The Private Vault protects encrypted data with a passphrase and a
+              one-time Recovery Code. The vault key remains only in memory while
+              the vault is unlocked.
             </p>
-            <button className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white" onClick={onEnableVault}>
+            <button
+              type="button"
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white self-start"
+              onClick={handleEnableVault}
+            >
               Enable vault
             </button>
           </>
@@ -546,443 +773,509 @@ export default function Settings() {
           <>
             {!vaultUnlocked ? (
               <div className="flex flex-wrap gap-2">
-                <button className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white" onClick={onUnlock}>Unlock (passphrase)</button>
-                <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white" onClick={onUnlockWithRecovery}>Unlock (Recovery Code)</button>
+                <button
+                  type="button"
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+                  onClick={handleUnlockWithPassphrase}
+                >
+                  Unlock with passphrase
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                  onClick={handleUnlockWithRecoveryCode}
+                >
+                  Unlock with Recovery Code
+                </button>
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white" onClick={onChangePass}>Change passphrase</button>
-                <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white" onClick={onRegenRecovery}>Regenerate Recovery Code</button>
-                <button className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded text-white" onClick={onLockNow}>Lock now</button>
+                <button
+                  type="button"
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                  onClick={handleChangePassphrase}
+                >
+                  Change passphrase
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                  onClick={handleRegenerateRecoveryCode}
+                >
+                  Regenerate Recovery Code
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded text-white"
+                  onClick={handleLockNow}
+                >
+                  Lock now
+                </button>
               </div>
             )}
 
-            <div className="mt-3">
-              <label className="block text-gray-200 text-sm mb-1">Auto-lock on idle</label>
+            <div>
+              <label
+                htmlFor="vault-idle-timeout"
+                className="block text-gray-200 text-sm mb-1"
+              >
+                Auto-lock after inactivity
+              </label>
               <div className="flex items-center gap-2">
                 <input
+                  id="vault-idle-timeout"
                   type="number"
-                  min={1}
+                  min="1"
                   className="bg-gray-700 text-white rounded p-2 w-24"
-                  value={idleMin}
-                  onChange={(e)=>onIdleChange(e.target.value)}
+                  value={idleMinutes}
+                  onChange={(event) =>
+                    handleIdleMinutesChange(event.target.value)
+                  }
                 />
                 <span className="text-gray-300 text-sm">minutes</span>
               </div>
             </div>
 
-            {showRecovery && generatedRecovery && (
-              <div className="mt-3 bg-gray-900 rounded p-3">
-                <p className="text-gray-200 text-sm font-semibold">Recovery Code (write this down):</p>
-                <p className="mt-1 text-white font-mono text-lg break-all">{generatedRecovery}</p>
+            {showRecoveryCode && recoveryCode && (
+              <div className="bg-gray-900 rounded p-3">
+                <p className="text-gray-200 text-sm font-semibold">
+                  Recovery Code — save this now
+                </p>
+                <p className="mt-2 text-white font-mono text-lg break-all">
+                  {recoveryCode}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={handleCopyRecoveryCode}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+                  >
+                    Copy code
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowRecoveryCode(false)}
+                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                  >
+                    Hide code
+                  </button>
+                </div>
                 <p className="text-xs text-amber-300 mt-2">
-                  Store offline. Anyone with this code can restore your encrypted backup, but it cannot be used to log into any account.
+                  Store it offline. Generating another Recovery Code invalidates
+                  this one.
                 </p>
               </div>
             )}
-
-            {vaultMsg && <p className="text-gray-300">{vaultMsg}</p>}
           </>
         )}
 
+        {vaultMessage && <p className="text-gray-300">{vaultMessage}</p>}
+
         <p className="text-xs text-gray-400">
-          Warning: Forgetting your passphrase <em>and</em> Recovery Code means your encrypted data cannot be recovered.
+          Forgetting both the passphrase and Recovery Code makes encrypted data
+          permanently unrecoverable.
         </p>
       </section>
 
-      {/* ===== Notifications & Reminders ===== */}
       <section className="bg-gray-800 rounded-lg p-4 shadow space-y-4 mb-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-white">Notifications &amp; Reminders</h3>
-          <label className="flex items-center gap-2 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold text-white">
+            Notifications &amp; Reminders
+          </h3>
+          <label className="flex items-center gap-2 text-sm text-gray-200">
             <input
               type="checkbox"
-              checked={!!notifCfg.enabled}
-              onChange={(e) => updateNotifCfg({ enabled: e.target.checked })}
+              checked={Boolean(notificationConfig.enabled)}
+              onChange={(event) =>
+                updateNotificationConfig({ enabled: event.target.checked })
+              }
             />
-            <span className="text-gray-200">Enabled</span>
+            Enabled
           </label>
         </div>
 
         <div className="text-sm text-gray-300">
           <p>
-            Get gentle reminders to pray. No servers, no accounts — scheduled locally on your device.
-            For maximum reliability across platforms, you can also export an <span className="italic">.ics</span> calendar.
+            Reminders are configured locally. Browser and operating-system power
+            controls can affect exact delivery on some devices.
           </p>
           <p className="mt-1">
-            Permission: <span className="font-medium">{perm}</span>
+            Permission:{' '}
+            <span className="font-medium">{notificationPermission}</span>
           </p>
         </div>
 
-        {/* Mode selection */}
         <div className="grid sm:grid-cols-2 gap-3">
           <div className="bg-gray-900 rounded p-3">
-            <label className="block text-gray-2 00 text-sm mb-1">Notification content</label>
-            <select
-              className="w-full bg-gray-700 text-white rounded p-2"
-              value={notifCfg.mode}
-              onChange={(e) => updateNotifCfg({ mode: e.target.value })}
+            <label
+              htmlFor="notification-content"
+              className="block text-gray-200 text-sm mb-1"
             >
-              <option value="simple">Simple — “Remember to pray”</option>
-              <option value="random">Randomized request (like Daily)</option>
-              <option value="ordered-category">Ordered cycle by Category</option>
-              <option value="ordered-requestor">Ordered cycle by Requestor</option>
+              Notification content
+            </label>
+            <select
+              id="notification-content"
+              className="w-full bg-gray-700 text-white rounded p-2"
+              value={notificationConfig.mode}
+              onChange={(event) =>
+                updateNotificationConfig({ mode: event.target.value })
+              }
+            >
+              <option value="simple">Simple — Remember to pray</option>
+              <option value="random">Randomized prayer request</option>
+              <option value="ordered-category">
+                Ordered cycle by category
+              </option>
+              <option value="ordered-requestor">
+                Ordered cycle by requestor
+              </option>
             </select>
 
-            {notifCfg.mode === 'ordered-category' && (
-              <div className="mt-2">
-                <label className="block text-gray-200 text-sm mb-1">Category</label>
-                <select
-                  className="w-full bg-gray-700 text-white rounded p-2"
-                  value={notifCfg.categoryId || ''}
-                  onChange={(e) => updateNotifCfg({ categoryId: e.target.value || null })}
+            {notificationConfig.mode === 'ordered-category' && (
+              <div className="mt-3">
+                <label
+                  htmlFor="notification-category"
+                  className="block text-gray-200 text-sm mb-1"
                 >
-                  <option value="">— Choose a category —</option>
-                  {categories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  Category
+                </label>
+                <select
+                  id="notification-category"
+                  className="w-full bg-gray-700 text-white rounded p-2"
+                  value={notificationConfig.categoryId || ''}
+                  onChange={(event) =>
+                    updateNotificationConfig({
+                      categoryId: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Choose a category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
                   ))}
                 </select>
               </div>
             )}
 
-            {notifCfg.mode === 'ordered-requestor' && (
-              <div className="mt-2">
-                <label className="block text-gray-200 text-sm mb-1">Requestor</label>
-                <select
-                  className="w-full bg-gray-700 text-white rounded p-2"
-                  value={notifCfg.requestorId || ''}
-                  onChange={(e) => updateNotifCfg({ requestorId: e.target.value || null })}
+            {notificationConfig.mode === 'ordered-requestor' && (
+              <div className="mt-3">
+                <label
+                  htmlFor="notification-requestor"
+                  className="block text-gray-200 text-sm mb-1"
                 >
-                  <option value="">— Choose a requestor —</option>
-                  {requestors.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
+                  Requestor
+                </label>
+                <select
+                  id="notification-requestor"
+                  className="w-full bg-gray-700 text-white rounded p-2"
+                  value={notificationConfig.requestorId || ''}
+                  onChange={(event) =>
+                    updateNotificationConfig({
+                      requestorId: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Choose a requestor</option>
+                  {requestors.map((requestor) => (
+                    <option key={requestor.id} value={requestor.id}>
+                      {requestor.name}
+                    </option>
                   ))}
                 </select>
               </div>
             )}
           </div>
 
-          {/* Schedule config (Fixed times or Interval) */}
           <div className="bg-gray-900 rounded p-3">
-            <label className="block text-gray-200 text-sm mb-1">Schedule type</label>
-            <select
-              className="w-full bg-gray-700 text-white rounded p-2 mb-3"
-              value={notifCfg.scheduleType || 'fixed-times'}
-              onChange={(e) => updateNotifCfg({ scheduleType: e.target.value })}
+            <label
+              htmlFor="notification-schedule-type"
+              className="block text-gray-200 text-sm mb-1"
             >
-              <option value="fixed-times">Fixed times (e.g., 8:00 AM, 8:00 PM)</option>
-              <option value="interval">Interval (every N minutes/hours)</option>
+              Schedule type
+            </label>
+            <select
+              id="notification-schedule-type"
+              className="w-full bg-gray-700 text-white rounded p-2 mb-3"
+              value={notificationConfig.scheduleType || 'fixed-times'}
+              onChange={(event) =>
+                updateNotificationConfig({
+                  scheduleType: event.target.value,
+                })
+              }
+            >
+              <option value="fixed-times">Specific times of day</option>
+              <option value="interval">Repeating interval</option>
             </select>
 
-            {notifCfg.scheduleType !== 'interval' ? (
-              <>
-                <label className="block text-gray-200 text-sm mb-2">Times (daily)</label>
-                <div className="flex flex-wrap gap-2">
-                  {notifCfg.times.map((t, i) => (
-                    <div key={i} className="flex items-center gap-2">
+            {notificationConfig.scheduleType === 'interval' ? (
+              <div>
+                <label
+                  htmlFor="notification-interval"
+                  className="block text-gray-200 text-sm mb-2"
+                >
+                  Repeat every
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    id="notification-interval"
+                    type="number"
+                    min="5"
+                    step="1"
+                    className="bg-gray-700 text-white rounded p-2 w-24"
+                    value={notificationConfig.intervalMinutes}
+                    onChange={(event) =>
+                      updateNotificationConfig({
+                        intervalMinutes: Math.max(
+                          5,
+                          Number.parseInt(event.target.value || '0', 10) || 0
+                        ),
+                      })
+                    }
+                  />
+                  <span className="text-gray-300 text-sm">minutes</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Examples: 30 minutes, 60 minutes for hourly, or 180 minutes
+                  for every 3 hours.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-gray-200 text-sm mb-2">
+                  Times of day
+                </label>
+                <div className="flex flex-col gap-2">
+                  {notificationConfig.times.map((time, index) => (
+                    <div
+                      key={`${time}-${index}`}
+                      className="flex flex-wrap items-center gap-2"
+                    >
                       <input
                         type="time"
                         className="bg-gray-700 text-white rounded p-2"
-                        value={t}
-                        onChange={(e) => {
-                          const times = [...notifCfg.times];
-                          times[i] = e.target.value;
-                          updateNotifCfg({ times });
+                        value={time}
+                        onChange={(event) => {
+                          const times = [...notificationConfig.times];
+                          times[index] = event.target.value;
+                          updateNotificationConfig({ times });
                         }}
                       />
                       <button
-                        className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600"
+                        type="button"
+                        className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-gray-200"
                         onClick={() => {
-                          const times = notifCfg.times.filter((_, idx) => idx !== i);
-                          updateNotifCfg({ times: times.length ? times : ['08:00'] });
+                          const times = notificationConfig.times.filter(
+                            (_, itemIndex) => itemIndex !== index
+                          );
+                          updateNotificationConfig({
+                            times: times.length > 0 ? times : ['08:00'],
+                          });
                         }}
-                        title="Remove time"
                       >
                         Remove
                       </button>
                     </div>
                   ))}
                   <button
-                    className="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600"
-                    onClick={() => updateNotifCfg({ times: [...notifCfg.times, '12:00'] })}
+                    type="button"
+                    className="text-sm px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 text-gray-200 self-start"
+                    onClick={() =>
+                      updateNotificationConfig({
+                        times: [...notificationConfig.times, '12:00'],
+                      })
+                    }
                   >
-                    + Add time
+                    Add another time
                   </button>
                 </div>
-              </>
-            ) : (
-              <>
-                <label className="block text-gray-200 text-sm mb-2">Interval</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={5}
-                    step={1}
-                    className="bg-gray-700 text-white rounded p-2 w-24"
-                    value={notifCfg.intervalMinutes}
-                    onChange={(e) => updateNotifCfg({ intervalMinutes: Math.max(5, parseInt(e.target.value || '0', 10) || 0) })}
-                    title="Minimum 5 minutes"
-                  />
-                  <span className="text-gray-300 text-sm">minutes</span>
-                  <span className="text-gray-500 text-xs">Tip: 60 = hourly, 30 = every 30 min, 180 = every 3 hours.</span>
-                </div>
-              </>
+              </div>
             )}
 
-            {/* Days of week always available */}
-            <div className="mt-3">
-              <label className="block text-gray-200 text-sm mb-1">Days of week</label>
-              <div className="grid grid-cols-7 gap-1 text-xs text-gray-200">
-                {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d, idx) => (
-                  <label key={d} className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={!!notifCfg.daysOfWeek[idx]}
-                      onChange={(e) => {
-                        const arr = [...notifCfg.daysOfWeek];
-                        arr[idx] = e.target.checked;
-                        updateNotifCfg({ daysOfWeek: arr });
-                      }}
-                    />
-                    <span>{d}</span>
-                  </label>
-                ))}
+            <div className="mt-4">
+              <span className="block text-gray-200 text-sm mb-2">
+                Days of week
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm text-gray-200">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
+                  (day, index) => (
+                    <label key={day} className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(
+                          notificationConfig.daysOfWeek[index]
+                        )}
+                        onChange={(event) => {
+                          const days = [...notificationConfig.daysOfWeek];
+                          days[index] = event.target.checked;
+                          updateNotificationConfig({ daysOfWeek: days });
+                        }}
+                      />
+                      {day}
+                    </label>
+                  )
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex flex-wrap gap-2">
           <button
-            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
+            type="button"
+            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white disabled:opacity-50"
             onClick={handleSaveAndSchedule}
-            disabled={notifBusy}
-            title="Schedules next 14 days; re-run after changes."
+            disabled={notificationBusy}
           >
             Save &amp; schedule
           </button>
           <button
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
+            type="button"
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white disabled:opacity-50"
             onClick={handleClearScheduled}
-            disabled={notifBusy}
+            disabled={notificationBusy}
           >
             Clear scheduled
           </button>
           <button
-            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded text-white"
+            type="button"
+            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 rounded text-white disabled:opacity-50"
             onClick={handleTestNotification}
-            disabled={notifBusy}
+            disabled={notificationBusy}
           >
             Test now
           </button>
           <button
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
-            onClick={handleExportICS}
-            disabled={notifBusy}
-            title="Creates a calendar file (interval = RRULE; fixed times = enumerated)"
+            type="button"
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white disabled:opacity-50"
+            onClick={handleExportCalendar}
+            disabled={notificationBusy}
           >
-            Export .ics (calendar)
+            Export .ics calendar
           </button>
         </div>
 
-        {notifMsg && <p className="text-gray-300">{notifMsg}</p>}
-
-        <p className="text-xs text-gray-400">
-          Tip: Some browsers support scheduled notifications natively (Notification Triggers). On platforms that don’t,
-          the .ics option is the most reliable without using a server.
-        </p>
+        {notificationMessage && (
+          <p className="text-gray-300">{notificationMessage}</p>
+        )}
       </section>
 
-      {/* ===== Backup & Restore ===== */}
-      <section
-        className="bg-gray-800 rounded-lg p-4 shadow select-none"
-        onMouseDown={beginLongPress}
-        onMouseUp={endLongPress}
-        onMouseLeave={endLongPress}
-        onTouchStart={beginLongPress}
-        onTouchEnd={endLongPress}
-      >
-        <h3
-          className="text-lg font-semibold text-white mb-2"
-          onClick={handleUnlockTap}
-          title="Tap 7× in 5s or long-press to unlock Advanced (CSV)"
-        >
+      <section className="bg-gray-800 rounded-lg p-4 shadow mb-6">
+        <h3 className="text-lg font-semibold text-white mb-3">
           Backup &amp; Restore
         </h3>
 
         <div className="flex flex-wrap gap-2 items-center mb-4">
           <button
-            onClick={handleExportJson}
-            disabled={busy}
+            type="button"
+            onClick={handleExportBackup}
+            disabled={backupBusy}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
-            {vaultEnabled ? 'Export Encrypted Backup' : 'Export JSON'}
+            {vaultEnabled ? 'Export encrypted backup' : 'Export JSON'}
           </button>
 
-          <label className="inline-flex items-center gap-2">
-            <span className="px-3 py-2 bg-gray-700 rounded text-white">Choose file</span>
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <span className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white">
+              Choose backup file
+            </span>
             <input
-              ref={jsonFileRef}
+              ref={backupFileRef}
               type="file"
               accept="application/json,.json"
-              onChange={handleJsonFileChange}
+              onChange={handleBackupFileChange}
               className="hidden"
             />
           </label>
 
           <button
-            onClick={() => importJson('merge')}
-            disabled={busy || !jsonPreview?.valid}
+            type="button"
+            onClick={() => handleImportBackup('merge')}
+            disabled={backupBusy || !backupPreview?.valid}
             className="px-3 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
           >
             Import (Merge)
           </button>
 
           <button
-            onClick={() => importJson('replace')}
-            disabled={busy || !jsonPreview?.valid}
+            type="button"
+            onClick={() => handleImportBackup('replace')}
+            disabled={backupBusy || !backupPreview?.valid}
             className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-            title="Replace clears existing data before import"
           >
             Import (Replace)
           </button>
         </div>
 
-        {jsonPreview?.valid && !jsonPreview?.encrypted && (
+        {backupPreview?.valid && !backupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
             <p className="mb-1">
-              <span className="font-semibold">Ready to import:</span> {jsonPreview.fileName}
+              <span className="font-semibold">Ready to import:</span>{' '}
+              {backupPreview.fileName}
             </p>
             <ul className="list-disc list-inside">
-              <li>Categories: {jsonPreview.counts.categories}</li>
-              <li>Requestors: {jsonPreview.counts.requestors}</li>
-              <li>Prayers: {jsonPreview.counts.prayers}</li>
-              <li>Events: {jsonPreview.counts.events}</li>
-              <li>Journal entries: {jsonPreview.counts.journalEntries}</li>
+              <li>Categories: {backupPreview.counts.categories}</li>
+              <li>Requestors: {backupPreview.counts.requestors}</li>
+              <li>Prayers: {backupPreview.counts.prayers}</li>
+              <li>Events: {backupPreview.counts.events}</li>
+              <li>
+                Journal entries: {backupPreview.counts.journalEntries}
+              </li>
             </ul>
           </div>
         )}
 
-        {jsonPreview?.valid && jsonPreview?.encrypted && (
+        {backupPreview?.valid && backupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
-            <p className="mb-1"><span className="font-semibold">Encrypted backup detected:</span> {jsonPreview.fileName}</p>
-            <p className="text-xs text-gray-400">You will be prompted for a passphrase or Recovery Code.</p>
+            <p>
+              <span className="font-semibold">Encrypted backup detected:</span>{' '}
+              {backupPreview.fileName}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Import will request its passphrase or Recovery Code.
+            </p>
           </div>
         )}
 
-        {/* Advanced (CSV) */}
-        <div className="mt-6 border-t border-gray-700 pt-4">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-md font-semibold text-white">Advanced (CSV)</h4>
-            <div className="flex items-center gap-2">
-              {advancedVisible ? (
-                <button
-                  className="px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600"
-                  onClick={() => setAdvancedVisible(false)}
-                  title="Hide the Advanced CSV area and remove the unlock flag"
-                >
-                  Hide
-                </button>
-              ) : (
-                <span className="text-xs text-gray-400">
-                  (Long-press the header or tap it 7× to unlock)
-                </span>
-              )}
-            </div>
-          </div>
-
-          {advancedVisible && (
-            <>
-              <p className="text-gray-300 text-sm mb-3">
-                Import AppSheet-style CSV exports. You can provide any subset (Categories, Requestors, Prayers). Blank rows are skipped.
-              </p>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="bg-gray-900 rounded p-3">
-                  <label className="block text-gray-200 text-sm mb-1">Categories CSV</label>
-                  <input
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(e) => setCsv('categories', e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-gray-200"
-                  />
-                </div>
-
-                <div className="bg-gray-900 rounded p-3">
-                  <label className="block text-gray-200 text-sm mb-1">Requestors CSV</label>
-                  <input
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(e) => setCsv('requestors', e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-gray-200"
-                  />
-                </div>
-
-                <div className="bg-gray-900 rounded p-3 sm:col-span-2">
-                  <label className="block text-gray-200 text-sm mb-1">Prayers CSV</label>
-                  <input
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(e) => setCsv('prayers', e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-gray-200"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex gap-2">
-                <button
-                  onClick={() => importCsv('merge')}
-                  disabled={busy}
-                  className="px-3 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  Import CSV (Merge)
-                </button>
-                <button
-                  onClick={() => importCsv('replace')}
-                  disabled={busy}
-                  className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                  title="Replace clears existing data before import"
-                >
-                  Import CSV (Replace)
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {message && <p className="mt-4 text-gray-300">{message}</p>}
+        {backupMessage && (
+          <p className="mt-4 text-gray-300">{backupMessage}</p>
+        )}
       </section>
 
-      {/* ===== Onboarding ===== */}
-      <section className="bg-gray-800 rounded-lg p-4 shadow mt-6">
+      <section className="bg-gray-800 rounded-lg p-4 shadow mb-6">
         <h3 className="text-lg font-semibold text-white mb-2">Onboarding</h3>
         <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
-            onClick={() => window.dispatchEvent(new Event('ui:showTutorial'))}
+            onClick={() =>
+              window.dispatchEvent(new Event('ui:showTutorial'))
+            }
           >
             Show tutorial
           </button>
           <button
+            type="button"
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-white"
             onClick={() => {
               localStorage.removeItem('cp:onboarded');
-              setMessage('First-run flag cleared. The tutorial will show on next launch or when you press “Show tutorial.”');
+              setBackupMessage(
+                'First-run flag cleared. The tutorial will appear on the next launch.'
+              );
             }}
-            title="Clear first-run flag (tutorial shows again)"
           >
             Reset first-run flag
           </button>
         </div>
       </section>
 
-      {/* ===== About ===== */}
-      <section className="bg-gray-800 rounded-lg p-4 shadow mt-6">
+      <section className="bg-gray-800 rounded-lg p-4 shadow">
         <h3 className="text-lg font-semibold text-white mb-2">About</h3>
-        <p className="text-gray-300 text-sm">
-          Your data stays on this device by default (IndexedDB). Use Backup to export a JSON you can keep
-          securely or move to another device. To restore, import that JSON. No account required.
+        <p className="text-gray-300 text-sm leading-relaxed">
+          Closet Prayer stores its database locally on this device using
+          IndexedDB. No account is required. Keep current backups before clearing
+          browser data, uninstalling the app, or moving to another device.
         </p>
       </section>
     </div>
