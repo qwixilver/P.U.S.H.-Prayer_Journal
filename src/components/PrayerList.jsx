@@ -334,7 +334,7 @@ export default function PrayerList({
         groupedDaily &&
         Object.keys(groupedDaily)
           .sort((categoryA, categoryB) =>
-            categoryB.localeCompare(categoryA, undefined, {
+            categoryA.localeCompare(categoryB, undefined, {
               sensitivity: 'base',
             })
           )
