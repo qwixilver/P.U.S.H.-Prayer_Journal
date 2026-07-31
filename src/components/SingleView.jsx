@@ -22,6 +22,14 @@ function randomPrayer(prayers) {
   return prayers[Math.floor(Math.random() * prayers.length)];
 }
 
+function isActivePrayer(prayer) {
+  const normalizedStatus = String(prayer?.status || '')
+    .trim()
+    .toLowerCase();
+
+  return normalizedStatus !== 'answered' && !prayer?.answeredAt;
+}
+
 export default function SingleView({ initialPrayerId = null }) {
   const [eligible, setEligible] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -49,8 +57,10 @@ export default function SingleView({ initialPrayerId = null }) {
           .filter((requestor) => eligibleCategoryIds.has(requestor.categoryId))
           .map((requestor) => requestor.id)
       );
-      const eligiblePrayers = prayers.filter((prayer) =>
-        eligibleRequestorIds.has(prayer.requestorId)
+      const eligiblePrayers = prayers.filter(
+        (prayer) =>
+          eligibleRequestorIds.has(prayer.requestorId) &&
+          isActivePrayer(prayer)
       );
 
       setEligible(eligiblePrayers);
@@ -107,7 +117,7 @@ export default function SingleView({ initialPrayerId = null }) {
           bg-gray-800 rounded-xl shadow-lg
           p-4
           min-h-[260px] max-h-[calc(100vh-180px)]
-          flex flex-col
+          flex flex-col overflow-hidden
         "
       >
         <div className="flex items-start justify-between">
@@ -127,7 +137,7 @@ export default function SingleView({ initialPrayerId = null }) {
           </button>
         </div>
 
-        <div className="mt-3 overflow-y-auto">
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
           <p className="text-gray-100 whitespace-pre-wrap">
             {current.description || '(No details)'}
           </p>
@@ -156,7 +166,7 @@ export default function SingleView({ initialPrayerId = null }) {
           </div>
         </div>
 
-        <div className="absolute left-4 bottom-4">
+        <div className="mt-3 border-t border-gray-700 pt-3 flex-shrink-0">
           <button
             type="button"
             onClick={nextRandom}

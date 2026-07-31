@@ -119,8 +119,25 @@ function CategoryList() {
     }));
   };
 
-  const handleRequestorEditSuccess = async (categoryId, requestorId) => {
-    await loadRequestors(categoryId);
+  const handleRequestorEditSuccess = async ({
+    previousCategoryId,
+    categoryId,
+    requestorId,
+  }) => {
+    const affectedCategoryIds = Array.from(
+      new Set(
+        [previousCategoryId, categoryId]
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id))
+      )
+    );
+
+    await Promise.all(
+      affectedCategoryIds.map((affectedCategoryId) =>
+        loadRequestors(affectedCategoryId)
+      )
+    );
+
     closeEditRequestor(requestorId);
   };
 
@@ -234,11 +251,15 @@ function CategoryList() {
                                   onCancel={() =>
                                     closeEditRequestor(requestor.id)
                                   }
-                                  onSuccess={() =>
-                                    handleRequestorEditSuccess(
-                                      category.id,
-                                      requestor.id
-                                    )
+                                  onSuccess={(result = {}) =>
+                                    handleRequestorEditSuccess({
+                                      previousCategoryId:
+                                        result.previousCategoryId ?? category.id,
+                                      categoryId:
+                                        result.categoryId ?? category.id,
+                                      requestorId:
+                                        result.requestorId ?? requestor.id,
+                                    })
                                   }
                                 />
                               ) : (

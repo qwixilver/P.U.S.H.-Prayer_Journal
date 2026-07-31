@@ -332,34 +332,40 @@ export default function PrayerList({
       {!loading &&
         !isSecurity &&
         groupedDaily &&
-        Object.keys(groupedDaily).map((categoryName) => (
-          <section key={categoryName} className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-2">
-              {categoryName}
-            </h3>
-            <div className="space-y-4">
-              {groupedDaily[categoryName].map((group) => (
-                <div
-                  key={`${categoryName}-${group.requestorId}`}
-                  className="mt-2 rounded-lg border border-gray-700 p-2"
-                >
-                  <h4 className="text-sm font-semibold text-gray-200 mb-2">
-                    {group.requestorName}
-                  </h4>
-                  <ul className="space-y-3">
-                    {group.items.map((prayer) =>
-                      renderPrayerCard(
-                        prayer,
-                        group.requestorName,
-                        'h5'
-                      )
-                    )}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
+        Object.keys(groupedDaily)
+          .sort((categoryA, categoryB) =>
+            categoryB.localeCompare(categoryA, undefined, {
+              sensitivity: 'base',
+            })
+          )
+          .map((categoryName) => (
+            <section key={categoryName} className="mb-6">
+              <h3 className="text-lg font-semibold text-white mb-2">
+                {categoryName}
+              </h3>
+              <div className="space-y-4">
+                {groupedDaily[categoryName].map((group) => (
+                  <div
+                    key={`${categoryName}-${group.requestorId}`}
+                    className="mt-2 rounded-lg border border-gray-700 p-2"
+                  >
+                    <h4 className="text-sm font-semibold text-gray-200 mb-2">
+                      {group.requestorName}
+                    </h4>
+                    <ul className="space-y-3">
+                      {group.items.map((prayer) =>
+                        renderPrayerCard(
+                          prayer,
+                          group.requestorName,
+                          'h5'
+                        )
+                      )}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
 
       {!showAddForm && (
         <button
