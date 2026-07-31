@@ -1,6 +1,6 @@
 // src/App.jsx
 // Root app with bottom navigation, first-run tutorial, emergency restore,
-// and launch-action routing for PWA shortcuts / Android widget deep links.
+// focused-prayer routing, and launch actions for PWA shortcuts / Android widgets.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import BottomNav from './components/BottomNav';
@@ -15,6 +15,7 @@ import TutorialModal from './components/TutorialModal';
 
 const TAB_STORAGE_KEY = 'cp:activeTab';
 const ONBOARDED_KEY = 'cp:onboarded';
+
 const VALID_TABS = new Set([
   'daily',
   'single',
@@ -52,6 +53,7 @@ function readLocationIntent() {
   }
 
   const savedTab = localStorage.getItem(TAB_STORAGE_KEY);
+
   return {
     tab: savedTab && VALID_TABS.has(savedTab) ? savedTab : 'daily',
     action: null,
@@ -69,6 +71,7 @@ function removeLaunchActionFromUrl() {
 export default function App() {
   const initialIntent = useMemo(readLocationIntent, []);
   const [activeTab, setActiveTab] = useState(initialIntent.tab);
+  const [focusedPrayerId, setFocusedPrayerId] = useState(null);
   const [pendingLaunchAction, setPendingLaunchAction] = useState(initialIntent.action);
   const [showRestore, setShowRestore] = useState(
     () => window.location.hash.toLowerCase() === '#restore'
@@ -78,6 +81,10 @@ export default function App() {
   const handleTabChange = useCallback((tab) => {
     if (!VALID_TABS.has(tab) || tab === 'restore') return;
 
+    if (tab !== 'single') {
+      setFocusedPrayerId(null);
+    }
+
     setActiveTab(tab);
     localStorage.setItem(TAB_STORAGE_KEY, tab);
 
@@ -85,6 +92,11 @@ export default function App() {
     url.hash = tab;
     history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
+
+  const handleFocusPrayer = useCallback((prayerId) => {
+    setFocusedPrayerId(prayerId);
+    handleTabChange('single');
+  }, [handleTabChange]);
 
   useEffect(() => {
     if (!localStorage.getItem(ONBOARDED_KEY)) setShowTutorial(true);
@@ -117,15 +129,17 @@ export default function App() {
       }
 
       setShowRestore(false);
+      setFocusedPrayerId(null);
+
       const intent = readLocationIntent();
       setActiveTab(intent.tab);
       localStorage.setItem(TAB_STORAGE_KEY, intent.tab);
-
       if (intent.action) setPendingLaunchAction(intent.action);
     };
 
     window.addEventListener('hashchange', applyLocation);
     window.addEventListener('popstate', applyLocation);
+
     return () => {
       window.removeEventListener('hashchange', applyLocation);
       window.removeEventListener('popstate', applyLocation);
@@ -156,11 +170,23 @@ export default function App() {
     <>
       <main className="min-h-screen bg-gray-900 text-white pb-24">
         <ErrorBoundary>
-          {activeTab === 'daily' && <PrayerList viewType="daily" />}
-          {activeTab === 'single' && <SingleView />}
+          {activeTab === 'daily' && (
+            <PrayerList
+              viewType="daily"
+              onFocusPrayer={handleFocusPrayer}
+            />
+          )}
+          {activeTab === 'single' && (
+            <SingleView initialPrayerId={focusedPrayerId} />
+          )}
           {activeTab === 'categories' && <CategoryList />}
           {activeTab === 'journal' && <JournalList />}
-          {activeTab === 'security' && <PrayerList viewType="security" />}
+          {activeTab === 'security' && (
+            <PrayerList
+              viewType="security"
+              onFocusPrayer={handleFocusPrayer}
+            />
+          )}
           {activeTab === 'settings' && <Settings />}
         </ErrorBoundary>
       </main>
@@ -183,6 +209,7 @@ export default function App() {
             url.hash = 'daily';
             history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
             setShowRestore(false);
+            setFocusedPrayerId(null);
             setActiveTab('daily');
           }}
         />

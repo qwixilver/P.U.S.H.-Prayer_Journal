@@ -21,7 +21,7 @@ function fmt(iso) {
 export default function PrayerList({
   viewType = 'daily',
   isSecurity: isSecurityProp = false,
-  onOpenSingle,
+  onFocusPrayer,
 }) {
   const isSecurity = isSecurityProp || viewType === 'security';
   const [categories, setCategories] = useState([]);
@@ -215,6 +215,11 @@ export default function PrayerList({
   function renderPrayerCard(prayer, requestorName, headingLevel = 'h4') {
     const Heading = headingLevel;
     const isExpanded = Boolean(expanded[prayer.id]);
+    const requestor = requestorById.get(prayer.requestorId);
+    const category = requestor
+      ? categoryById.get(requestor.categoryId)
+      : null;
+    const isFocusEligible = Boolean(category?.showSingle);
 
     return (
       <li key={prayer.id} className="bg-gray-800 rounded-lg p-3 shadow">
@@ -241,13 +246,16 @@ export default function PrayerList({
             >
               {isExpanded ? 'Hide details' : 'Details'}
             </button>
-            <button
-              type="button"
-              onClick={() => onOpenSingle?.(prayer.id)}
-              className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
-            >
-              Open
-            </button>
+            {isFocusEligible && typeof onFocusPrayer === 'function' && (
+              <button
+                type="button"
+                onClick={() => onFocusPrayer(prayer.id)}
+                className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+                title="Open this request in Focus"
+              >
+                Focus
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditTarget(prayer)}

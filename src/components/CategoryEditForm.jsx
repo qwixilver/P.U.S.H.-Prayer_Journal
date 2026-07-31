@@ -1,80 +1,69 @@
 // src/components/CategoryEditForm.jsx
-// Defensive, self-loading edit form for a Category.
-// Fixes crash when the component renders before the category is fetched.
-// Props:
-//   - categoryId   (required): number ID of the category to edit
-//   - onCancel     (optional): function -> void
-//   - onSuccess    (optional): function -> void (called after successful save/delete)
-//
-// Behavior:
-//   - Loads the category by ID on mount.
-//   - If not found: shows a friendly message + Cancel button.
-//   - Save validates name, updates category, and emits a 'db:changed' event.
-//   - Delete refuses to run if category still has requestors; warns clearly.
-//   - "Include in Single View" maps to boolean persisted as 1/0 in IndexedDB.
+// Defensive, self-loading category editor with safe deletion checks.
+// The showSingle field remains unchanged internally but is labeled as Focus.
 
 import React, { useEffect, useState } from 'react';
 import { db } from '../db';
 
 export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
-  // Loading / error state for the record fetch
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-
-  // Form fields — initialized AFTER we fetch the category
-  const [name, setName] = useState('');                 // category.name
-  const [description, setDescription] = useState('');   // category.description
-  const [showSingle, setShowSingle] = useState(false);  // category.showSingle (store as 1/0)
-
-  // Submission state / feedback
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [showSingle, setShowSingle] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
-  // --- Load the category on mount / when categoryId changes ---
   useEffect(() => {
     let alive = true;
+
     async function load() {
       setLoading(true);
       setLoadError('');
       setMessage('');
+
       try {
-        const cat = await db.categories.get(categoryId);
+        const category = await db.categories.get(categoryId);
         if (!alive) return;
 
-        if (!cat) {
+        if (!category) {
           setLoadError('Category not found.');
           setLoading(false);
           return;
         }
 
-        // Initialize form fields defensively
-        setName(cat.name || '');
-        setDescription(cat.description || '');
-        setShowSingle(Boolean(cat.showSingle));
-      } catch (err) {
-        console.error('CategoryEditForm: load error', err);
+        setName(category.name || '');
+        setDescription(category.description || '');
+        setShowSingle(Boolean(category.showSingle));
+      } catch (error) {
+        console.error('CategoryEditForm: load error', error);
         if (alive) setLoadError('Failed to load category.');
       } finally {
         if (alive) setLoading(false);
       }
     }
+
     if (categoryId == null) {
       setLoadError('No category specified.');
       setLoading(false);
     } else {
       load();
     }
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [categoryId]);
 
-  // --- Save handler ---
-  async function handleSave(e) {
-    e?.preventDefault?.();
+  async function handleSave(event) {
+    event?.preventDefault?.();
     setMessage('');
+
     if (!name.trim()) {
       setMessage('Name is required.');
       return;
     }
+
     try {
       setBusy(true);
       await db.categories.update(categoryId, {
@@ -83,53 +72,53 @@ export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
         showSingle: showSingle ? 1 : 0,
       });
 
-      // Notify rest of app
       window.dispatchEvent(new Event('db:changed'));
-
       setMessage('Saved.');
+
       if (typeof onSuccess === 'function') onSuccess();
-    } catch (err) {
-      console.error('CategoryEditForm: save error', err);
+    } catch (error) {
+      console.error('CategoryEditForm: save error', error);
       setMessage('Save failed (see console).');
     } finally {
       setBusy(false);
     }
   }
 
-  // --- Delete handler ---
   async function handleDelete() {
     setMessage('');
+
     try {
-      // Count requestors in this category
-      const count = await db.requestors.where('categoryId').equals(categoryId).count();
+      const count = await db.requestors
+        .where('categoryId')
+        .equals(categoryId)
+        .count();
+
       if (count > 0) {
         alert(
           `This category still has ${count} requestor(s).\n\n` +
-          `For safety, delete or move those requestors first before deleting the category.`
+          'For safety, delete or move those requestors first before deleting the category.'
         );
         return;
       }
 
-      const yes = confirm('Delete this category? This cannot be undone.');
-      if (!yes) return;
+      const confirmed = confirm('Delete this category? This cannot be undone.');
+      if (!confirmed) return;
 
       setBusy(true);
       await db.categories.delete(categoryId);
 
-      // Notify rest of app
       window.dispatchEvent(new Event('db:changed'));
-
       setMessage('Category deleted.');
+
       if (typeof onSuccess === 'function') onSuccess();
-    } catch (err) {
-      console.error('CategoryEditForm: delete error', err);
+    } catch (error) {
+      console.error('CategoryEditForm: delete error', error);
       setMessage('Delete failed (see console).');
     } finally {
       setBusy(false);
     }
   }
 
-  // --- Render states ---
   if (loading) {
     return (
       <div className="p-4 bg-gray-700 rounded">
@@ -155,7 +144,6 @@ export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
     );
   }
 
-  // --- Main form ---
   return (
     <form
       onSubmit={handleSave}
@@ -163,48 +151,43 @@ export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
     >
       <h4 className="text-white font-semibold mb-3">Edit Category</h4>
 
-      {/* Name */}
       <div className="mb-2">
         <label className="block text-gray-300 text-sm mb-1">Name</label>
         <input
           type="text"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(event) => setName(event.target.value)}
           className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           placeholder="e.g., Family, Urgent"
         />
       </div>
 
-      {/* Description */}
       <div className="mb-2">
         <label className="block text-gray-300 text-sm mb-1">Description</label>
         <textarea
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(event) => setDescription(event.target.value)}
           rows={2}
           className="w-full p-2 bg-gray-600 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           placeholder="Short description for this category"
         />
       </div>
 
-      {/* Include in Single View */}
       <div className="flex items-center mb-3">
         <input
           id="showSingle"
           type="checkbox"
           checked={showSingle}
-          onChange={(e) => setShowSingle(e.target.checked)}
+          onChange={(event) => setShowSingle(event.target.checked)}
           className="mr-2"
         />
         <label htmlFor="showSingle" className="text-gray-200 text-sm">
-          Include in “Single View”
+          Display requests from this category in “Focus”
         </label>
       </div>
 
-      {/* Status line */}
       {message && <p className="text-gray-200 text-sm mb-2">{message}</p>}
 
-      {/* Actions */}
       <div className="flex flex-wrap gap-2">
         <button
           type="submit"
@@ -213,7 +196,6 @@ export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
         >
           {busy ? 'Saving…' : 'Save'}
         </button>
-
         <button
           type="button"
           onClick={onCancel}
@@ -222,7 +204,6 @@ export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
         >
           Cancel
         </button>
-
         <button
           type="button"
           onClick={handleDelete}

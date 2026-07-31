@@ -1,11 +1,8 @@
 // src/components/SingleView.jsx
-// Single-view of one prayer (by id or random rotation).
-// - Adds an "Edit" button that opens a modal reusing the Add Prayer form.
-// - Editing here does NOT touch events (modal form doesn't show events).
-//
-// NOTE: This drop-in keeps all your existing randomization and layout.
+// Focus view of one eligible prayer, opened directly by ID or chosen randomly.
+// Editing does not modify the prayer's event timeline.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { db } from '../db';
 import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
@@ -13,66 +10,94 @@ import PrayerEventForm from './PrayerEventForm';
 
 function fmt(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString();
+
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleDateString();
+}
+
+function randomPrayer(prayers) {
+  if (!prayers.length) return null;
+  return prayers[Math.floor(Math.random() * prayers.length)];
 }
 
 export default function SingleView({ initialPrayerId = null }) {
-  const [eligible, setEligible] = useState([]); // eligible prayer ids or objects
-  const [current, setCurrent] = useState(null); // current prayer object
+  const [eligible, setEligible] = useState([]);
+  const [current, setCurrent] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  // NEW: show edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [addEventOpen, setAddEventOpen] = useState(false);
 
-
-  async function loadEligible() {
+  const loadEligible = useCallback(async ({ preferInitial = false } = {}) => {
     setLoading(true);
+
     try {
-      // Only include prayers whose category has showSingle=true
-      const [cats, reqs, prs] = await Promise.all([
+      const [categories, requestors, prayers] = await Promise.all([
         db.categories.toArray(),
         db.requestors.toArray(),
         db.prayers.toArray(),
       ]);
 
-      const eligibleCatIds = new Set(cats.filter((c) => c.showSingle).map((c) => c.id));
-      const eligibleReqIds = reqs.filter((r) => eligibleCatIds.has(r.categoryId)).map((r) => r.id);
-      const setReqIds = new Set(eligibleReqIds);
-      const eligiblePrs = prs.filter((p) => setReqIds.has(p.requestorId));
-      setEligible(eligiblePrs);
+      const eligibleCategoryIds = new Set(
+        categories
+          .filter((category) => Boolean(category.showSingle))
+          .map((category) => category.id)
+      );
+      const eligibleRequestorIds = new Set(
+        requestors
+          .filter((requestor) => eligibleCategoryIds.has(requestor.categoryId))
+          .map((requestor) => requestor.id)
+      );
+      const eligiblePrayers = prayers.filter((prayer) =>
+        eligibleRequestorIds.has(prayer.requestorId)
+      );
 
-      if (initialPrayerId) {
-        const found = eligiblePrs.find((p) => p.id === initialPrayerId);
-        setCurrent(found || null);
-      } else {
-        setCurrent(eligiblePrs.length ? eligiblePrs[Math.floor(Math.random() * eligiblePrs.length)] : null);
-      }
-    } catch (e) {
-      console.error('Load eligible failed', e);
+      setEligible(eligiblePrayers);
+      setCurrent((previous) => {
+        if (preferInitial && initialPrayerId != null) {
+          return eligiblePrayers.find((prayer) => prayer.id === initialPrayerId) || null;
+        }
+
+        if (previous) {
+          const refreshed = eligiblePrayers.find((prayer) => prayer.id === previous.id);
+          if (refreshed) return refreshed;
+        }
+
+        return randomPrayer(eligiblePrayers);
+      });
+    } catch (error) {
+      console.error('Load eligible failed', error);
       setEligible([]);
       setCurrent(null);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }
+  }, [initialPrayerId]);
 
-  useEffect(() => { loadEligible(); }, [initialPrayerId]);
   useEffect(() => {
-    const onDbChanged = () => loadEligible();
+    loadEligible({ preferInitial: true });
+  }, [loadEligible]);
+
+  useEffect(() => {
+    const onDbChanged = () => loadEligible({ preferInitial: false });
+
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
-  }, []);
+  }, [loadEligible]);
 
   function nextRandom() {
     if (!eligible.length) return;
-    const idx = Math.floor(Math.random() * eligible.length);
-    setCurrent(eligible[idx]);
+
+    setAddEventOpen(false);
+    setCurrent(randomPrayer(eligible));
   }
 
   if (loading) return <div className="p-4">Loading…</div>;
-  if (!current) return <div className="p-4">No eligible prayers for Single view.</div>;
+
+  if (!current) {
+    return <div className="p-4">No eligible prayers for Focus.</div>;
+  }
 
   return (
     <div className="p-4 pb-24">
@@ -85,7 +110,6 @@ export default function SingleView({ initialPrayerId = null }) {
           flex flex-col
         "
       >
-        {/* Header: title + small meta + Edit button */}
         <div className="flex items-start justify-between">
           <div className="pr-2">
             <h3 className="text-xl font-semibold text-white">{current.name}</h3>
@@ -95,6 +119,7 @@ export default function SingleView({ initialPrayerId = null }) {
           </div>
 
           <button
+            type="button"
             onClick={() => setEditOpen(true)}
             className="px-2 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
           >
@@ -102,41 +127,38 @@ export default function SingleView({ initialPrayerId = null }) {
           </button>
         </div>
 
-        {/* Scrollable details */}
         <div className="mt-3 overflow-y-auto">
-          <p className="text-gray-100 whitespace-pre-wrap">{current.description || '(No details)'}</p>
+          <p className="text-gray-100 whitespace-pre-wrap">
+            {current.description || '(No details)'}
+          </p>
 
-          {/* Events timeline + Add Event */}
-<div className="mt-4">
-  <div className="flex items-center justify-between mb-2">
-    <h4 className="text-white font-semibold">Events</h4>
-    {current && (
-      <button
-        onClick={() => setAddEventOpen((v) => !v)}
-        className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
-      >
-        {addEventOpen ? 'Close' : 'Add event'}
-      </button>
-    )}
-  </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-white font-semibold">Events</h4>
+              <button
+                type="button"
+                onClick={() => setAddEventOpen((open) => !open)}
+                className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {addEventOpen ? 'Close' : 'Add event'}
+              </button>
+            </div>
 
-  {addEventOpen && current && (
-    <PrayerEventForm
-      prayerId={current.id}
-      onSuccess={() => setAddEventOpen(false)}
-      onCancel={() => setAddEventOpen(false)}
-    />
-  )}
+            {addEventOpen && (
+              <PrayerEventForm
+                prayerId={current.id}
+                onSuccess={() => setAddEventOpen(false)}
+                onCancel={() => setAddEventOpen(false)}
+              />
+            )}
 
-  {current && <PrayerEventList prayerId={current.id} allowDelete={true} />}
-  {!current && <p className="text-gray-400 text-sm">No prayer selected.</p>}
-</div>
-
+            <PrayerEventList prayerId={current.id} allowDelete />
+          </div>
         </div>
 
-        {/* Next button fixed to bottom-left of card */}
         <div className="absolute left-4 bottom-4">
           <button
+            type="button"
             onClick={nextRandom}
             className="px-3 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
           >
@@ -145,7 +167,6 @@ export default function SingleView({ initialPrayerId = null }) {
         </div>
       </div>
 
-      {/* EDIT MODAL */}
       {editOpen && (
         <PrayerUpsertModal
           initialPrayer={current}
