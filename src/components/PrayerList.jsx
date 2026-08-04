@@ -9,6 +9,31 @@ import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
 import PrayerEventForm from './PrayerEventForm';
 
+const DAILY_FILTER_STORAGE_KEY = 'cp:dailyStatusFilters:v1';
+
+function loadDailyStatusFilters() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(DAILY_FILTER_STORAGE_KEY) || 'null'
+    );
+
+    const showRequested = saved?.showRequested !== false;
+    const showAnswered = saved?.showAnswered !== false;
+
+    if (!showRequested && !showAnswered) {
+      return { showRequested: true, showAnswered: true };
+    }
+
+    return { showRequested, showAnswered };
+  } catch {
+    return { showRequested: true, showAnswered: true };
+  }
+}
+
+function isAnsweredPrayer(prayer) {
+  return (prayer?.status || '').toLowerCase() === 'answered' || Boolean(prayer?.answeredAt);
+}
+
 function fmt(iso) {
   if (!iso) return '';
 
@@ -32,6 +57,9 @@ export default function PrayerList({
   const [expanded, setExpanded] = useState({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [dailyStatusFilters, setDailyStatusFilters] = useState(
+    loadDailyStatusFilters
+  );
 
   async function load() {
     setLoading(true);
@@ -108,12 +136,23 @@ export default function PrayerList({
     return map;
   }, [requestors]);
 
+  const visiblePrayers = useMemo(() => {
+    if (isSecurity) return prayers;
+
+    return prayers.filter((prayer) => {
+      const answered = isAnsweredPrayer(prayer);
+
+      if (answered) return dailyStatusFilters.showAnswered;
+      return dailyStatusFilters.showRequested;
+    });
+  }, [isSecurity, prayers, dailyStatusFilters]);
+
   const groupedDaily = useMemo(() => {
     if (isSecurity) return null;
 
     const byCategory = new Map();
 
-    for (const prayer of prayers) {
+    for (const prayer of visiblePrayers) {
       const requestor = requestorById.get(prayer.requestorId);
       const category = requestor
         ? categoryById.get(requestor.categoryId)
@@ -156,12 +195,56 @@ export default function PrayerList({
     }
 
     return output;
-  }, [isSecurity, prayers, requestorById, categoryById]);
+  }, [isSecurity, visiblePrayers, requestorById, categoryById]);
 
   const handleAddSuccess = async () => {
     await load();
     setShowAddForm(false);
   };
+
+  function updateDailyStatusFilter(filterName, enabled) {
+    setDailyStatusFilters((current) => {
+      const next = {
+        ...current,
+        [filterName]: enabled,
+      };
+
+      if (!next.showRequested && !next.showAnswered) {
+        return current;
+      }
+
+      localStorage.setItem(
+        DAILY_FILTER_STORAGE_KEY,
+        JSON.stringify(next)
+      );
+
+      return next;
+    });
+  }
+
+  function renderStatusToggle({ label, checked, onChange, disabled }) {
+    return (
+      <label
+        className={`inline-flex items-center gap-2 text-sm ${
+          disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+        }`}
+      >
+        <span className="text-gray-200">{label}</span>
+        <span className="relative inline-flex">
+          <input
+            type="checkbox"
+            className="peer sr-only"
+            checked={checked}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.checked)}
+            aria-label={`Show ${label.toLowerCase()} prayers`}
+          />
+          <span className="h-6 w-11 rounded-full bg-gray-600 transition peer-checked:bg-yellow-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-yellow-300 peer-disabled:cursor-not-allowed" />
+          <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5" />
+        </span>
+      </label>
+    );
+  }
 
   function togglePrayerDetails(prayerId) {
     setExpanded((current) => ({
@@ -303,20 +386,55 @@ export default function PrayerList({
         </div>
       )}
 
-      <h2 className="text-2xl font-bold mb-4">
-        {isSecurity ? 'Security' : 'Daily'} Prayers
-      </h2>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <h2 className="text-2xl font-bold">
+          {isSecurity ? 'Security' : 'Daily'} Prayers
+        </h2>
+
+        {!isSecurity && (
+          <div
+            className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 rounded-lg bg-gray-800 px-3 py-2 shadow"
+            aria-label="Daily prayer status filters"
+          >
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              Show
+            </span>
+            {renderStatusToggle({
+              label: 'Requested',
+              checked: dailyStatusFilters.showRequested,
+              disabled:
+                dailyStatusFilters.showRequested &&
+                !dailyStatusFilters.showAnswered,
+              onChange: (enabled) =>
+                updateDailyStatusFilter('showRequested', enabled),
+            })}
+            {renderStatusToggle({
+              label: 'Answered',
+              checked: dailyStatusFilters.showAnswered,
+              disabled:
+                dailyStatusFilters.showAnswered &&
+                !dailyStatusFilters.showRequested,
+              onChange: (enabled) =>
+                updateDailyStatusFilter('showAnswered', enabled),
+            })}
+          </div>
+        )}
+      </div>
 
       {loading && <p className="text-gray-400">Loading…</p>}
 
-      {!loading && prayers.length === 0 && (
-        <p className="text-gray-400">No prayers found.</p>
+      {!loading && visiblePrayers.length === 0 && (
+        <p className="text-gray-400">
+          {isSecurity
+            ? 'No prayers found.'
+            : 'No prayers match the selected status filters.'}
+        </p>
       )}
 
-      {!loading && isSecurity && prayers.length > 0 && (
+      {!loading && isSecurity && visiblePrayers.length > 0 && (
         <section className="mb-6">
           <ul className="space-y-3">
-            {prayers.map((prayer) => {
+            {visiblePrayers.map((prayer) => {
               const requestor = requestorById.get(prayer.requestorId);
 
               return renderPrayerCard(
