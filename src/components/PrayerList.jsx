@@ -30,8 +30,16 @@ function loadDailyStatusFilters() {
   }
 }
 
-function isAnsweredPrayer(prayer) {
-  return (prayer?.status || '').toLowerCase() === 'answered' || Boolean(prayer?.answeredAt);
+function getPrayerStatus(prayer) {
+  const normalizedStatus = String(prayer?.status ?? '')
+    .trim()
+    .toLowerCase();
+
+  if (normalizedStatus === 'answered') return 'answered';
+  if (normalizedStatus === 'requested') return 'requested';
+
+  // Legacy fallback only: explicit status always wins when present.
+  return prayer?.answeredAt ? 'answered' : 'requested';
 }
 
 function fmt(iso) {
@@ -140,9 +148,9 @@ export default function PrayerList({
     if (isSecurity) return prayers;
 
     return prayers.filter((prayer) => {
-      const answered = isAnsweredPrayer(prayer);
+      const status = getPrayerStatus(prayer);
 
-      if (answered) return dailyStatusFilters.showAnswered;
+      if (status === 'answered') return dailyStatusFilters.showAnswered;
       return dailyStatusFilters.showRequested;
     });
   }, [isSecurity, prayers, dailyStatusFilters]);
@@ -302,7 +310,9 @@ export default function PrayerList({
     const category = requestor
       ? categoryById.get(requestor.categoryId)
       : null;
-    const isFocusEligible = Boolean(category?.showSingle);
+    const prayerStatus = getPrayerStatus(prayer);
+    const isFocusEligible =
+      Boolean(category?.showSingle) && prayerStatus === 'requested';
 
     return (
       <li key={prayer.id} className="bg-gray-800 rounded-lg p-3 shadow">
@@ -315,7 +325,8 @@ export default function PrayerList({
               {prayer.description}
             </p>
             <div className="text-gray-400 text-xs mt-1">
-              Requestor: {requestorName} • Requested: {fmt(prayer.requestedAt)} • Status: {prayer.status}
+              Requestor: {requestorName} • Requested: {fmt(prayer.requestedAt)} • Status:{' '}
+              {prayerStatus === 'answered' ? 'Answered' : 'Requested'}
             </div>
           </div>
 

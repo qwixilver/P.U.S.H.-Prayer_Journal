@@ -22,12 +22,20 @@ function randomPrayer(prayers) {
   return prayers[Math.floor(Math.random() * prayers.length)];
 }
 
-function isActivePrayer(prayer) {
-  const normalizedStatus = String(prayer?.status || '')
+function getPrayerStatus(prayer) {
+  const normalizedStatus = String(prayer?.status ?? '')
     .trim()
     .toLowerCase();
 
-  return normalizedStatus !== 'answered' && !prayer?.answeredAt;
+  if (normalizedStatus === 'answered') return 'answered';
+  if (normalizedStatus === 'requested') return 'requested';
+
+  // Legacy fallback only: explicit status always wins when present.
+  return prayer?.answeredAt ? 'answered' : 'requested';
+}
+
+function isActivePrayer(prayer) {
+  return getPrayerStatus(prayer) === 'requested';
 }
 
 export default function SingleView({ initialPrayerId = null }) {
@@ -124,7 +132,7 @@ export default function SingleView({ initialPrayerId = null }) {
           <div className="pr-2">
             <h3 className="text-xl font-semibold text-white">{current.name}</h3>
             <div className="text-gray-300 text-sm">
-              Requested: {fmt(current.requestedAt)} • Status: {current.status}
+              Requested: {fmt(current.requestedAt)} • Status: Requested
             </div>
           </div>
 
