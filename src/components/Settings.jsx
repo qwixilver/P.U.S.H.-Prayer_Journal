@@ -496,12 +496,15 @@ export default function Settings() {
         return {
           fileName,
           encrypted: true,
+          portable: parsed?.header?.contents === 'portable-graft',
+          selection: null,
           counts: null,
           valid: true,
           raw: parsed,
         };
       }
 
+      const portable = parsed?.exportType === 'cp/portable-graft';
       const data = parsed?.data || parsed || {};
       const counts = {
         categories: Array.isArray(data.categories) ? data.categories.length : 0,
@@ -516,6 +519,8 @@ export default function Settings() {
       return {
         fileName,
         encrypted: false,
+        portable,
+        selection: parsed?.selection || null,
         counts,
         valid: true,
         raw: parsed,
@@ -524,6 +529,8 @@ export default function Settings() {
       return {
         fileName,
         encrypted: false,
+        portable: false,
+        selection: null,
         counts: null,
         valid: false,
         error: error?.message || 'Invalid JSON',
@@ -577,10 +584,18 @@ export default function Settings() {
       if (!preview.valid) {
         setBackupMessage(`Could not read backup: ${preview.error}`);
       } else if (preview.encrypted) {
-        setBackupMessage(`Encrypted backup detected: ${preview.fileName}`);
-      } else {
         setBackupMessage(
-          `Loaded ${preview.fileName}: ` +
+          preview.portable
+            ? `Encrypted portable graft detected: ${preview.fileName}`
+            : `Encrypted backup detected: ${preview.fileName}`
+        );
+      } else {
+        const prefix = preview.portable
+          ? `Portable ${preview.selection?.kind || 'data'} graft loaded: `
+          : 'Loaded ';
+        setBackupMessage(
+          prefix +
+            `${preview.fileName}: ` +
             `${preview.counts.categories} categories, ` +
             `${preview.counts.requestors} requestors, ` +
             `${preview.counts.prayers} prayers, ` +
@@ -598,6 +613,13 @@ export default function Settings() {
   async function handleImportBackup(mode) {
     if (!backupPreview?.valid || !backupPreview?.raw) {
       setBackupMessage('Choose a valid backup file first.');
+      return;
+    }
+
+    if (mode === 'replace' && backupPreview.portable) {
+      setBackupMessage(
+        'Portable branch exports must be imported with Merge so they can be grafted into the current database.'
+      );
       return;
     }
 
@@ -653,7 +675,11 @@ export default function Settings() {
       }
 
       emitDbChanged();
-      setBackupMessage(`Import (${mode}) complete.`);
+      setBackupMessage(
+        backupPreview.portable
+          ? 'Portable graft imported successfully. Existing unrelated data was preserved.'
+          : `Import (${mode}) complete.`
+      );
       setBackupPreview(null);
       resetBackupFileInput();
     } catch (error) {
@@ -1205,8 +1231,17 @@ export default function Settings() {
           <button
             type="button"
             onClick={() => handleImportBackup('replace')}
-            disabled={backupBusy || !backupPreview?.valid}
+            disabled={
+              backupBusy ||
+              !backupPreview?.valid ||
+              Boolean(backupPreview?.portable)
+            }
             className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            title={
+              backupPreview?.portable
+                ? 'Portable grafts must use Merge Import'
+                : 'Erase current data and restore this full backup'
+            }
           >
             Import (Replace)
           </button>
@@ -1214,10 +1249,24 @@ export default function Settings() {
 
         {backupPreview?.valid && !backupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
-            <p className="mb-1">
-              <span className="font-semibold">Ready to import:</span>{' '}
-              {backupPreview.fileName}
+            <p className="mb-1 flex flex-wrap items-center gap-2">
+              <span className="font-semibold">
+                {backupPreview.portable
+                  ? 'Portable graft ready:'
+                  : 'Ready to import:'}
+              </span>{' '}
+              <span>{backupPreview.fileName}</span>
+              {backupPreview.portable && (
+                <span className="rounded bg-emerald-700 px-2 py-0.5 text-xs text-white">
+                  Merge only
+                </span>
+              )}
             </p>
+            {backupPreview.portable && backupPreview.selection?.label && (
+              <p className="mb-2 text-gray-400">
+                Selection: {backupPreview.selection.label}
+              </p>
+            )}
             <ul className="list-disc list-inside">
               <li>Categories: {backupPreview.counts.categories}</li>
               <li>Requestors: {backupPreview.counts.requestors}</li>
@@ -1233,11 +1282,18 @@ export default function Settings() {
         {backupPreview?.valid && backupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
             <p>
-              <span className="font-semibold">Encrypted backup detected:</span>{' '}
+              <span className="font-semibold">
+                {backupPreview.portable
+                  ? 'Encrypted portable graft detected:'
+                  : 'Encrypted backup detected:'}
+              </span>{' '}
               {backupPreview.fileName}
             </p>
             <p className="text-xs text-gray-400 mt-1">
               Import will request its passphrase or Recovery Code.
+              {backupPreview.portable
+                ? ' Portable grafts must use Merge Import.'
+                : ''}
             </p>
           </div>
         )}

@@ -7,6 +7,7 @@ import { db } from '../db';
 import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
 import PrayerEventForm from './PrayerEventForm';
+import DataExportButton from './DataExportButton';
 
 function fmt(iso) {
   if (!iso) return '';
@@ -140,13 +141,20 @@ export default function SingleView({ initialPrayerId = null }) {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setEditOpen(true)}
-            className="px-2 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            Edit
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DataExportButton
+              kind="prayer"
+              id={current.id}
+              title="Export this prayer with its requestor, category, and event timeline"
+            />
+            <button
+              type="button"
+              onClick={() => setEditOpen(true)}
+              className="px-2 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Edit
+            </button>
+          </div>
         </div>
 
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">

@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../db';
 import JournalForm from './JournalForm';
 import JournalEditForm from './JournalEditForm';
+import DataExportButton from './DataExportButton';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -292,6 +293,11 @@ export default function JournalList() {
                         >
                           {isExpanded ? 'Collapse' : 'Read'}
                         </button>
+                        <DataExportButton
+                          kind="journal"
+                          id={entry.id}
+                          title="Export this journal entry as a portable database package"
+                        />
                         <button
                           type="button"
                           onClick={() =>

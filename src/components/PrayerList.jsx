@@ -8,6 +8,7 @@ import PrayerForm from './PrayerForm';
 import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
 import PrayerEventForm from './PrayerEventForm';
+import DataExportButton from './DataExportButton';
 
 const DAILY_FILTER_STORAGE_KEY = 'cp:dailyStatusFilters:v1';
 
@@ -360,6 +361,11 @@ export default function PrayerList({
                 Focus
               </button>
             )}
+            <DataExportButton
+              kind="prayer"
+              id={prayer.id}
+              title="Export this prayer with its requestor, category, and event timeline"
+            />
             <button
               type="button"
               onClick={() => setEditTarget(prayer)}

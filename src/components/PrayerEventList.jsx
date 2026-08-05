@@ -1,38 +1,48 @@
 // src/components/PrayerEventList.jsx
-// Read-only timeline of events for a prayer, with optional quick delete.
-// Props:
-//   - prayerId   (required)
-//   - allowDelete (optional, default true)
-//   - compact     (optional, default false) → slightly tighter spacing for cards
-//
-// The list auto-refreshes on 'db:changed' and orders events oldest→newest.
+// Read-only timeline of events for a prayer, with portable export and optional delete.
 
 import React, { useEffect, useState } from 'react';
 import { db, emitDbChanged } from '../db';
+import DataExportButton from './DataExportButton';
 
-function fmt(dt) {
-  if (!dt) return '';
-  const d = new Date(dt);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(); // includes date + time based on user locale
+function fmt(dateTime) {
+  if (!dateTime) return '';
+
+  const date = new Date(dateTime);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleString();
 }
 
-export default function PrayerEventList({ prayerId, allowDelete = true, compact = false }) {
+export default function PrayerEventList({
+  prayerId,
+  allowDelete = true,
+  compact = false,
+}) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     if (!prayerId) return;
+
     setLoading(true);
+
     try {
-      // Get all events for this prayer and sort by createdAt ascending
-      const list = await db.events.where('prayerId').equals(prayerId).toArray();
-      list.sort((a, b) => (new Date(a.createdAt) - new Date(b.createdAt)));
+      const list = await db.events
+        .where('prayerId')
+        .equals(prayerId)
+        .toArray();
+
+      list.sort(
+        (eventA, eventB) =>
+          new Date(eventA.createdAt) - new Date(eventB.createdAt)
+      );
       setEvents(list);
-    } catch (err) {
-      console.error('load events failed', err);
+    } catch (error) {
+      console.error('Load events failed', error);
       setEvents([]);
     }
+
     setLoading(false);
   }
 
@@ -42,19 +52,24 @@ export default function PrayerEventList({ prayerId, allowDelete = true, compact 
 
   useEffect(() => {
     const onDbChanged = () => load();
+
     window.addEventListener('db:changed', onDbChanged);
     return () => window.removeEventListener('db:changed', onDbChanged);
   }, [prayerId]);
 
-  async function handleDelete(id) {
-    const yes = confirm('Delete this event? This cannot be undone.');
-    if (!yes) return;
+  async function handleDelete(eventId) {
+    const confirmed = window.confirm(
+      'Delete this event? This cannot be undone.'
+    );
+
+    if (!confirmed) return;
+
     try {
-      await db.events.delete(id);
+      await db.events.delete(eventId);
       emitDbChanged();
-    } catch (err) {
-      console.error('delete event failed', err);
-      alert('Failed to delete event (see console).');
+    } catch (error) {
+      console.error('Delete event failed', error);
+      window.alert('Failed to delete event. See the console for details.');
     }
   }
 
@@ -63,31 +78,45 @@ export default function PrayerEventList({ prayerId, allowDelete = true, compact 
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
       {loading && <p className="text-gray-400">Loading events…</p>}
+
       {!loading && events.length === 0 && (
         <p className="text-gray-400">No events yet.</p>
       )}
 
-      {events.map((e) => (
-        <div key={e.id} className="bg-gray-700 rounded p-3">
+      {events.map((event) => (
+        <div key={event.id} className="bg-gray-700 rounded p-3">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="text-gray-300 text-sm">{fmt(e.createdAt)}</div>
-              {e.title && <div className="text-white font-semibold">{e.title}</div>}
-              {e.note && (
+            <div className="min-w-0 flex-1">
+              <div className="text-gray-300 text-sm">
+                {fmt(event.createdAt)}
+              </div>
+              {event.title && (
+                <div className="text-white font-semibold">{event.title}</div>
+              )}
+              {event.note && (
                 <div className="text-gray-100 whitespace-pre-wrap">
-                  {e.note}
+                  {event.note}
                 </div>
               )}
             </div>
-            {allowDelete && (
-              <button
-                onClick={() => handleDelete(e.id)}
-                className="self-start text-xs px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
-                title="Delete event"
-              >
-                Delete
-              </button>
-            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2 self-start">
+              <DataExportButton
+                kind="event"
+                id={event.id}
+                title="Export this event with its prayer, requestor, and category"
+              />
+              {allowDelete && (
+                <button
+                  type="button"
+                  onClick={() => handleDelete(event.id)}
+                  className="text-xs px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+                  title="Delete event"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ))}

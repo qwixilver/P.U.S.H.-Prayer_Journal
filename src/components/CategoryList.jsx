@@ -8,6 +8,7 @@ import CategoryForm from './CategoryForm';
 import CategoryEditForm from './CategoryEditForm';
 import RequestorForm from './RequestorForm';
 import RequestorEditForm from './RequestorEditForm';
+import DataExportButton from './DataExportButton';
 
 const SHOW_ARCHIVED_STORAGE_KEY = 'cp:categoriesShowArchived:v1';
 
@@ -243,6 +244,11 @@ function CategoryList() {
                     >
                       {isExpanded ? 'Hide requestors' : 'Show requestors'}
                     </button>
+                    <DataExportButton
+                      kind="category"
+                      id={category.id}
+                      title="Export this category with all requestors, prayers, and events"
+                    />
                     <button
                       type="button"
                       onClick={() => openEditCategory(category.id)}
@@ -320,16 +326,23 @@ function CategoryList() {
                                       {requestor.description}
                                     </p>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      openEditRequestor(requestor.id)
-                                    }
-                                    className="px-2 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white self-start"
-                                    title="Edit Requestor"
-                                  >
-                                    Edit
-                                  </button>
+                                  <div className="flex flex-wrap items-center justify-end gap-2 self-start">
+                                    <DataExportButton
+                                      kind="requestor"
+                                      id={requestor.id}
+                                      title="Export this requestor with their category, prayers, and events"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openEditRequestor(requestor.id)
+                                      }
+                                      className="px-2 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
+                                      title="Edit Requestor"
+                                    >
+                                      Edit
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </li>
