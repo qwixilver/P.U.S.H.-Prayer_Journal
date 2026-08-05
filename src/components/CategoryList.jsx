@@ -9,6 +9,16 @@ import CategoryEditForm from './CategoryEditForm';
 import RequestorForm from './RequestorForm';
 import RequestorEditForm from './RequestorEditForm';
 
+const SHOW_ARCHIVED_STORAGE_KEY = 'cp:categoriesShowArchived:v1';
+
+function loadShowArchived() {
+  try {
+    return localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function CategoryList() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,6 +27,7 @@ function CategoryList() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState({});
   const [editingRequestor, setEditingRequestor] = useState({});
+  const [showArchived, setShowArchived] = useState(loadShowArchived);
 
   const loadCategories = async () => {
     setLoading(true);
@@ -79,6 +90,16 @@ function CategoryList() {
   const handleAddSuccess = async () => {
     await loadCategories();
     setShowAddForm(false);
+  };
+
+  const updateShowArchived = (enabled) => {
+    setShowArchived(enabled);
+
+    try {
+      localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, enabled ? '1' : '0');
+    } catch {
+      // The toggle still works for this session if storage is unavailable.
+    }
   };
 
   const openEditCategory = (categoryId) => {
@@ -162,7 +183,24 @@ function CategoryList() {
         </div>
       )}
 
-      <h2 className="text-2xl font-bold mb-4">Categories</h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-bold">Categories</h2>
+
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-gray-800 px-3 py-2 text-sm shadow">
+          <span className="text-gray-200">Show archived</span>
+          <span className="relative inline-flex">
+            <input
+              type="checkbox"
+              className="peer sr-only"
+              checked={showArchived}
+              onChange={(event) => updateShowArchived(event.target.checked)}
+              aria-label="Show archived requestors"
+            />
+            <span className="h-6 w-11 rounded-full bg-gray-600 transition peer-checked:bg-yellow-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-yellow-300" />
+            <span className="pointer-events-none absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5" />
+          </span>
+        </label>
+      </div>
 
       {loading && <p className="text-gray-400">Loading categories...</p>}
 
@@ -175,6 +213,10 @@ function CategoryList() {
           {categories.map((category) => {
             const isExpanded = Boolean(expanded[category.id]);
             const isEditingCategory = Boolean(editingCategory[category.id]);
+            const categoryRequestors = requestors[category.id] || [];
+            const visibleRequestors = categoryRequestors.filter(
+              (requestor) => showArchived || !Boolean(requestor.archived)
+            );
 
             return (
               <li
@@ -232,10 +274,9 @@ function CategoryList() {
                       onSuccess={() => loadRequestors(category.id)}
                     />
 
-                    {requestors[category.id] &&
-                    requestors[category.id].length > 0 ? (
+                    {visibleRequestors.length > 0 ? (
                       <ul className="mt-3 space-y-2">
-                        {requestors[category.id].map((requestor) => {
+                        {visibleRequestors.map((requestor) => {
                           const isEditingRequestor = Boolean(
                             editingRequestor[requestor.id]
                           );
@@ -265,9 +306,16 @@ function CategoryList() {
                               ) : (
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0 flex-1">
-                                    <p className="text-white font-medium">
-                                      {requestor.name}
-                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-white font-medium">
+                                        {requestor.name}
+                                      </p>
+                                      {Boolean(requestor.archived) && (
+                                        <span className="rounded bg-amber-700 px-2 py-0.5 text-xs text-white">
+                                          Archived
+                                        </span>
+                                      )}
+                                    </div>
                                     <p className="text-gray-300 text-sm">
                                       {requestor.description}
                                     </p>
@@ -290,7 +338,9 @@ function CategoryList() {
                       </ul>
                     ) : (
                       <p className="text-gray-400 mt-2">
-                        No requestors added yet.
+                        {showArchived
+                          ? 'No requestors added yet.'
+                          : 'No active requestors in this category.'}
                       </p>
                     )}
                   </div>

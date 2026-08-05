@@ -145,15 +145,25 @@ export default function PrayerList({
   }, [requestors]);
 
   const visiblePrayers = useMemo(() => {
-    if (isSecurity) return prayers;
+    const prayersForActiveRequestors = prayers.filter((prayer) => {
+      const requestor = requestorById.get(prayer.requestorId);
+      return !Boolean(requestor?.archived);
+    });
 
-    return prayers.filter((prayer) => {
+    if (isSecurity) return prayersForActiveRequestors;
+
+    return prayersForActiveRequestors.filter((prayer) => {
       const status = getPrayerStatus(prayer);
 
       if (status === 'answered') return dailyStatusFilters.showAnswered;
       return dailyStatusFilters.showRequested;
     });
-  }, [isSecurity, prayers, dailyStatusFilters]);
+  }, [
+    isSecurity,
+    prayers,
+    dailyStatusFilters,
+    requestorById,
+  ]);
 
   const groupedDaily = useMemo(() => {
     if (isSecurity) return null;

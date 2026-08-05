@@ -62,7 +62,11 @@ export default function SingleView({ initialPrayerId = null }) {
       );
       const eligibleRequestorIds = new Set(
         requestors
-          .filter((requestor) => eligibleCategoryIds.has(requestor.categoryId))
+          .filter(
+            (requestor) =>
+              !Boolean(requestor.archived) &&
+              eligibleCategoryIds.has(requestor.categoryId)
+          )
           .map((requestor) => requestor.id)
       );
       const eligiblePrayers = prayers.filter(

@@ -151,13 +151,17 @@ export default function Settings() {
         categoryRows.sort((a, b) =>
           (a.name || '').localeCompare(b.name || '')
         );
-        requestorRows.sort((a, b) =>
+        const activeRequestorRows = requestorRows.filter(
+          (requestor) => !Boolean(requestor.archived)
+        );
+
+        activeRequestorRows.sort((a, b) =>
           (a.name || '').localeCompare(b.name || '')
         );
 
         if (!cancelled) {
           setCategories(categoryRows);
-          setRequestors(requestorRows);
+          setRequestors(activeRequestorRows);
         }
       } catch (error) {
         console.error('Could not load notification options:', error);

@@ -1,5 +1,5 @@
 // src/components/RequestorEditForm.jsx
-// Edits a requestor, including moving it to another category.
+// Edits a requestor, including category changes and archive status.
 
 import React, { useEffect, useState } from 'react';
 import { db, emitDbChanged } from '../db';
@@ -16,6 +16,7 @@ export default function RequestorEditForm({
     requestor.description || ''
   );
   const [security, setSecurity] = useState(Boolean(requestor.security));
+  const [archived, setArchived] = useState(Boolean(requestor.archived));
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -82,6 +83,7 @@ export default function RequestorEditForm({
         name: name.trim(),
         description: description.trim(),
         security: security ? 1 : 0,
+        archived: archived ? 1 : 0,
       });
 
       emitDbChanged();
@@ -200,6 +202,23 @@ export default function RequestorEditForm({
         />
         <span className="ml-2">Security View Only</span>
       </label>
+
+      <div className="rounded-lg border border-gray-700 bg-gray-900/50 p-3">
+        <label className="inline-flex items-center text-gray-200">
+          <input
+            type="checkbox"
+            className="form-checkbox h-5 w-5 text-yellow-400"
+            checked={archived}
+            onChange={(event) => setArchived(event.target.checked)}
+            disabled={submitting}
+          />
+          <span className="ml-2 font-medium">Archive this requestor</span>
+        </label>
+        <p className="mt-1 text-xs text-gray-400">
+          Archived requestors and their prayers are hidden everywhere except
+          the Categories page when “Show archived” is enabled.
+        </p>
+      </div>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
 

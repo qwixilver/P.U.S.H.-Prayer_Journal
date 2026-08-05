@@ -3,14 +3,15 @@
 // - Fixed-times schedule (specific times per day) OR interval schedule (every N minutes/hours).
 // - Uses Notification Triggers where available; falls back to in-app timers.
 // - Optional .ics export (fixed-times enumerated; interval uses RRULE).
+// - Archived requestors are excluded from request-based notifications.
 // - No servers, no push endpoints, no accounts.
 
 import { db } from '../db';
 
 // ---------- constants & storage keys ----------
 const CFG_KEY = 'cp:notifications:v1';
-const CYCLE_KEY_PREFIX = 'cp:notifyCycle'; // cp:notifyCycle:category:<id> or ...:requestor:<id>
-const SCHEDULE_TAG_PREFIX = 'cp:notify:';  // used for tags when scheduling with triggers
+const CYCLE_KEY_PREFIX = 'cp:notifyCycle';
+const SCHEDULE_TAG_PREFIX = 'cp:notify:';
 
 // ---------- public config helpers ----------
 export function loadNotificationConfig() {
@@ -30,9 +31,17 @@ export async function ensurePermission() {
   if (!('Notification' in window)) {
     throw new Error('Notifications are not supported on this device/browser.');
   }
-  let perm = Notification.permission;
-  if (perm === 'default') perm = await Notification.requestPermission();
-  if (perm !== 'granted') throw new Error('Notification permission was denied.');
+
+  let permission = Notification.permission;
+
+  if (permission === 'default') {
+    permission = await Notification.requestPermission();
+  }
+
+  if (permission !== 'granted') {
+    throw new Error('Notification permission was denied.');
+  }
+
   return true;
 }
 
@@ -45,93 +54,125 @@ function supportsTriggers() {
 }
 
 // ---------- date helpers ----------
-function ms(n) { return n; }
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
-// Parse "HH:mm" → Date (today at time), and return timestamp in ms for a given date anchor.
 function timeOnDate(anchor, hhmm) {
-  const [h, m] = (hhmm || '09:00').split(':').map((n) => parseInt(n, 10));
-  const d = new Date(anchor);
-  d.setHours(h || 0, m || 0, 0, 0);
-  return d.getTime();
+  const [hour, minute] = (hhmm || '09:00')
+    .split(':')
+    .map((value) => Number.parseInt(value, 10));
+  const date = new Date(anchor);
+
+  date.setHours(hour || 0, minute || 0, 0, 0);
+  return date.getTime();
 }
 
-// daysOfWeek = [0..6] booleans; return true if given date matches.
 function isAllowedDay(date, daysOfWeek) {
-  if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return true; // default allow all
-  return !!daysOfWeek[date.getDay()];
+  if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return true;
+  return Boolean(daysOfWeek[date.getDay()]);
 }
 
-// ---------- schedule builder (fixed-times or interval) ----------
-/**
- * Build upcoming timestamps respecting cfg.scheduleType:
- * - 'fixed-times': at cfg.times on allowed days over horizonDays
- * - 'interval': every cfg.intervalMinutes from "now", capped by maxOccurrences/horizonDays and filtered by allowed days
- */
 function buildUpcomingSchedule(
-  cfg,
+  config,
   { horizonDays = 14, maxOccurrences = 64 } = {}
 ) {
   const now = Date.now();
-
-  // Default to fixed-times for backward compatibility
-  const scheduleType = cfg?.scheduleType || 'fixed-times';
+  const scheduleType = config?.scheduleType || 'fixed-times';
   const daysOfWeek =
-    Array.isArray(cfg?.daysOfWeek) && cfg.daysOfWeek.length === 7
-      ? cfg.daysOfWeek
+    Array.isArray(config?.daysOfWeek) && config.daysOfWeek.length === 7
+      ? config.daysOfWeek
       : [true, true, true, true, true, true, true];
 
   if (scheduleType === 'interval') {
-    // Interval in minutes (min 5 minutes to avoid OS throttling / abuse)
-    let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
-    if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
+    let intervalMinutes = Number.parseInt(
+      config?.intervalMinutes || 60,
+      10
+    );
 
-    const out = [];
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5) {
+      intervalMinutes = 5;
+    }
+
+    const timestamps = [];
     const horizonLimit = now + horizonDays * DAY;
+    let timestamp = now + intervalMinutes * MIN;
 
-    // Start at the next tick from now
-    let t = now + intervalMin * MIN;
-    while (t <= horizonLimit && out.length < maxOccurrences) {
-      const d = new Date(t);
-      if (isAllowedDay(d, daysOfWeek)) out.push(t);
-      t += intervalMin * MIN;
+    while (
+      timestamp <= horizonLimit &&
+      timestamps.length < maxOccurrences
+    ) {
+      const date = new Date(timestamp);
+
+      if (isAllowedDay(date, daysOfWeek)) {
+        timestamps.push(timestamp);
+      }
+
+      timestamp += intervalMinutes * MIN;
     }
-    return out;
+
+    return timestamps;
   }
 
-  // fixed-times (existing behavior)
-  const times = Array.isArray(cfg?.times) && cfg.times.length ? cfg.times : ['09:00'];
-  const out = [];
+  const times =
+    Array.isArray(config?.times) && config.times.length
+      ? config.times
+      : ['09:00'];
+  const timestamps = [];
   const start = new Date();
+
   start.setSeconds(0, 0);
-  for (let i = 0; i < horizonDays; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    if (!isAllowedDay(d, daysOfWeek)) continue;
-    for (const t of times) {
-      const ts = timeOnDate(d, t);
-      if (ts > now) out.push(ts);
+
+  for (let dayOffset = 0; dayOffset < horizonDays; dayOffset += 1) {
+    const date = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate() + dayOffset
+    );
+
+    if (!isAllowedDay(date, daysOfWeek)) continue;
+
+    for (const time of times) {
+      const timestamp = timeOnDate(date, time);
+      if (timestamp > now) timestamps.push(timestamp);
     }
   }
-  // Respect maxOccurrences to avoid over-scheduling
-  out.sort((a, b) => a - b);
-  return out.slice(0, maxOccurrences);
+
+  timestamps.sort((left, right) => left - right);
+  return timestamps.slice(0, maxOccurrences);
 }
 
 // ---------- picking logic ----------
 async function pickRandomPrayer() {
-  // Same pool as Daily: prayers with status === 'requested'
-  const prayers = await db.prayers.where('status').equals('requested').toArray();
-  if (!prayers.length) return null;
-  const i = Math.floor(Math.random() * prayers.length);
-  const p = prayers[i];
-  const req = p?.requestorId ? await db.requestors.get(p.requestorId) : null;
-  const cat = req?.categoryId ? await db.categories.get(req.categoryId) : null;
+  const [prayers, requestors, categories] = await Promise.all([
+    db.prayers.where('status').equals('requested').toArray(),
+    db.requestors.toArray(),
+    db.categories.toArray(),
+  ]);
+  const requestorById = new Map(
+    requestors.map((requestor) => [requestor.id, requestor])
+  );
+  const categoryById = new Map(
+    categories.map((category) => [category.id, category])
+  );
+  const eligiblePrayers = prayers.filter((prayer) => {
+    const requestor = requestorById.get(prayer.requestorId);
+    return !Boolean(requestor?.archived);
+  });
+
+  if (!eligiblePrayers.length) return null;
+
+  const prayer =
+    eligiblePrayers[Math.floor(Math.random() * eligiblePrayers.length)];
+  const requestor = requestorById.get(prayer.requestorId) || null;
+  const category = requestor
+    ? categoryById.get(requestor.categoryId) || null
+    : null;
+
   return {
-    title: p?.name || 'Prayer request',
-    requestor: req?.name || 'Someone',
-    category: cat?.name || 'General',
-    id: p?.id
+    title: prayer?.name || 'Prayer request',
+    requestor: requestor?.name || 'Someone',
+    category: category?.name || 'General',
+    id: prayer?.id,
   };
 }
 
@@ -139,199 +180,312 @@ function cycleKey(scope, id) {
   return `${CYCLE_KEY_PREFIX}:${scope}:${id}`;
 }
 
-function getAndBumpCycle(scope, id, listLen) {
+function getAndBumpCycle(scope, id, listLength) {
   const key = cycleKey(scope, id);
   const raw = localStorage.getItem(key);
-  let idx = raw ? parseInt(raw, 10) : 0;
-  if (Number.isNaN(idx) || idx < 0) idx = 0;
-  const next = listLen ? (idx % listLen) : 0;
-  localStorage.setItem(key, String((idx + 1) % Math.max(1, listLen)));
+  let index = raw ? Number.parseInt(raw, 10) : 0;
+
+  if (Number.isNaN(index) || index < 0) index = 0;
+
+  const next = listLength ? index % listLength : 0;
+
+  localStorage.setItem(
+    key,
+    String((index + 1) % Math.max(1, listLength))
+  );
+
   return next;
 }
 
 async function pickOrderedByCategory(categoryId) {
   if (!categoryId) return null;
-  const reqs = await db.requestors.where('categoryId').equals(categoryId).toArray();
-  const reqIds = reqs.map(r => r.id);
-  if (!reqIds.length) return null;
-  const prayers = await db.prayers
-    .where('requestorId').anyOf(reqIds)
-    .and(p => p.status === 'requested')
+
+  const requestors = await db.requestors
+    .where('categoryId')
+    .equals(categoryId)
     .toArray();
+  const activeRequestors = requestors.filter(
+    (requestor) => !Boolean(requestor.archived)
+  );
+  const requestorIds = activeRequestors.map((requestor) => requestor.id);
+
+  if (!requestorIds.length) return null;
+
+  const prayers = await db.prayers
+    .where('requestorId')
+    .anyOf(requestorIds)
+    .and((prayer) => prayer.status === 'requested')
+    .toArray();
+
   if (!prayers.length) return null;
-  const idx = getAndBumpCycle('category', categoryId, prayers.length);
-  const p = prayers[idx];
-  const req = reqs.find(r => r.id === p.requestorId);
-  const cat = await db.categories.get(categoryId);
+
+  const index = getAndBumpCycle('category', categoryId, prayers.length);
+  const prayer = prayers[index];
+  const requestor = activeRequestors.find(
+    (item) => item.id === prayer.requestorId
+  );
+  const category = await db.categories.get(categoryId);
+
   return {
-    title: p?.name || 'Prayer request',
-    requestor: req?.name || 'Someone',
-    category: cat?.name || 'General',
-    id: p?.id
+    title: prayer?.name || 'Prayer request',
+    requestor: requestor?.name || 'Someone',
+    category: category?.name || 'General',
+    id: prayer?.id,
   };
 }
 
 async function pickOrderedByRequestor(requestorId) {
   if (!requestorId) return null;
+
+  const requestor = await db.requestors.get(requestorId);
+
+  if (!requestor || Boolean(requestor.archived)) return null;
+
   const prayers = await db.prayers
-    .where('requestorId').equals(requestorId)
-    .and(p => p.status === 'requested')
+    .where('requestorId')
+    .equals(requestorId)
+    .and((prayer) => prayer.status === 'requested')
     .toArray();
+
   if (!prayers.length) return null;
-  const idx = getAndBumpCycle('requestor', requestorId, prayers.length);
-  const p = prayers[idx];
-  const req = await db.requestors.get(requestorId);
-  const cat = req?.categoryId ? await db.categories.get(req.categoryId) : null;
+
+  const index = getAndBumpCycle(
+    'requestor',
+    requestorId,
+    prayers.length
+  );
+  const prayer = prayers[index];
+  const category = requestor.categoryId
+    ? await db.categories.get(requestor.categoryId)
+    : null;
+
   return {
-    title: p?.name || 'Prayer request',
-    requestor: req?.name || 'Someone',
-    category: cat?.name || 'General',
-    id: p?.id
+    title: prayer?.name || 'Prayer request',
+    requestor: requestor?.name || 'Someone',
+    category: category?.name || 'General',
+    id: prayer?.id,
   };
 }
 
-// Build the content for a single notification occurrence based on config
-async function buildPayload(cfg) {
-  const mode = cfg?.mode || 'simple';
+async function buildPayload(config) {
+  const mode = config?.mode || 'simple';
+
   if (mode === 'random') {
-    const sel = await pickRandomPrayer();
-    if (!sel) return { title: 'Closet Prayer', body: 'Remember to pray.', hash: '#daily' };
+    const selection = await pickRandomPrayer();
+
+    if (!selection) {
+      return {
+        title: 'Closet Prayer',
+        body: 'Remember to pray.',
+        hash: '#daily',
+      };
+    }
+
     return {
       title: 'Closet Prayer — Random',
-      body: `Pray for ${sel.requestor}: ${sel.title} (${sel.category})`,
-      hash: '#single'
+      body: `Pray for ${selection.requestor}: ${selection.title} (${selection.category})`,
+      hash: '#single',
     };
   }
-  if (mode === 'ordered-category' && cfg?.categoryId) {
-    const sel = await pickOrderedByCategory(cfg.categoryId);
-    if (!sel) return { title: 'Closet Prayer', body: 'Remember to pray.', hash: '#daily' };
+
+  if (mode === 'ordered-category' && config?.categoryId) {
+    const selection = await pickOrderedByCategory(config.categoryId);
+
+    if (!selection) {
+      return {
+        title: 'Closet Prayer',
+        body: 'Remember to pray.',
+        hash: '#daily',
+      };
+    }
+
     return {
       title: 'Closet Prayer — Focused',
-      body: `Category • ${sel.category}: ${sel.requestor} — ${sel.title}`,
-      hash: '#daily'
+      body: `Category • ${selection.category}: ${selection.requestor} — ${selection.title}`,
+      hash: '#daily',
     };
   }
-  if (mode === 'ordered-requestor' && cfg?.requestorId) {
-    const sel = await pickOrderedByRequestor(cfg.requestorId);
-    if (!sel) return { title: 'Closet Prayer', body: 'Remember to pray.', hash: '#daily' };
+
+  if (mode === 'ordered-requestor' && config?.requestorId) {
+    const selection = await pickOrderedByRequestor(config.requestorId);
+
+    if (!selection) {
+      return {
+        title: 'Closet Prayer',
+        body: 'Remember to pray.',
+        hash: '#daily',
+      };
+    }
+
     return {
       title: 'Closet Prayer — Focused',
-      body: `Requestor • ${sel.requestor}: ${sel.title}`,
-      hash: '#daily'
+      body: `Requestor • ${selection.requestor}: ${selection.title}`,
+      hash: '#daily',
     };
   }
-  return { title: 'Closet Prayer', body: 'Remember to pray.', hash: '#daily' };
+
+  return {
+    title: 'Closet Prayer',
+    body: 'Remember to pray.',
+    hash: '#daily',
+  };
 }
 
 // ---------- scheduling ----------
-let inAppTimers = []; // fallbacks
+let inAppTimers = [];
 
 function clearInAppTimers() {
-  inAppTimers.forEach((id) => clearTimeout(id));
+  inAppTimers.forEach((timerId) => clearTimeout(timerId));
   inAppTimers = [];
 }
 
 export async function clearScheduledNotifications() {
   clearInAppTimers();
+
   if (!('serviceWorker' in navigator)) return;
+
   try {
-    const reg = await navigator.serviceWorker.ready;
-    const list = await reg.getNotifications({});
-    list.forEach(n => {
-      if (n.tag && String(n.tag).startsWith(SCHEDULE_TAG_PREFIX)) n.close();
+    const registration = await navigator.serviceWorker.ready;
+    const notifications = await registration.getNotifications({});
+
+    notifications.forEach((notification) => {
+      if (
+        notification.tag &&
+        String(notification.tag).startsWith(SCHEDULE_TAG_PREFIX)
+      ) {
+        notification.close();
+      }
     });
-  } catch (e) {
-    console.warn('clearScheduledNotifications warning', e);
+  } catch (error) {
+    console.warn('clearScheduledNotifications warning', error);
   }
 }
 
-export async function scheduleNotifications(cfg) {
+export async function scheduleNotifications(config) {
   await ensurePermission();
   await clearScheduledNotifications();
 
-  const timestamps = buildUpcomingSchedule(cfg, { horizonDays: 14, maxOccurrences: 64 }); // next 2 weeks, capped
+  const timestamps = buildUpcomingSchedule(config, {
+    horizonDays: 14,
+    maxOccurrences: 64,
+  });
   let useTriggers = supportsTriggers();
 
   if (useTriggers) {
     try {
-      const reg = await navigator.serviceWorker.ready;
-      for (const ts of timestamps) {
-        const payload = await buildPayload(cfg);
-        const tag = `${SCHEDULE_TAG_PREFIX}${ts}`;
-        // Experimental: Notification Triggers
-        await reg.showNotification(payload.title, {
+      const registration = await navigator.serviceWorker.ready;
+
+      for (const timestamp of timestamps) {
+        const payload = await buildPayload(config);
+        const tag = `${SCHEDULE_TAG_PREFIX}${timestamp}`;
+
+        await registration.showNotification(payload.title, {
           body: payload.body,
           tag,
           // @ts-ignore - experimental
-          showTrigger: new TimestampTrigger(ts),
-          data: { hash: payload.hash, ts }
+          showTrigger: new TimestampTrigger(timestamp),
+          data: { hash: payload.hash, timestamp },
         });
       }
-    } catch (e) {
-      console.warn('showNotification(showTrigger) failed; falling back to in-app timers', e);
+    } catch (error) {
+      console.warn(
+        'showNotification(showTrigger) failed; falling back to in-app timers',
+        error
+      );
       useTriggers = false;
     }
   }
 
-  // Fallback: in-app timers while page is open
   if (!useTriggers) {
-    for (const ts of timestamps) {
-      const delay = Math.max(0, ts - Date.now());
-      const t = setTimeout(async () => {
+    for (const timestamp of timestamps) {
+      const delay = Math.max(0, timestamp - Date.now());
+      const timerId = setTimeout(async () => {
         try {
-          const payload = await buildPayload(cfg);
-          new Notification(payload.title, { body: payload.body, tag: `${SCHEDULE_TAG_PREFIX}${ts}` });
-        } catch {}
+          const payload = await buildPayload(config);
+
+          new Notification(payload.title, {
+            body: payload.body,
+            tag: `${SCHEDULE_TAG_PREFIX}${timestamp}`,
+          });
+        } catch {
+          // A failed occurrence should not stop later scheduled reminders.
+        }
       }, delay);
-      inAppTimers.push(t);
+
+      inAppTimers.push(timerId);
     }
   }
 }
 
-// ---------- ICS export (reliable OS alarms via calendar) ----------
-function pad(n) { return n < 10 ? '0'+n : ''+n; }
+// ---------- ICS export ----------
+function pad(value) {
+  return value < 10 ? `0${value}` : String(value);
+}
+
 function toICSDateUTC(date) {
-  // YYYYMMDDTHHMMSSZ
   return (
     date.getUTCFullYear().toString() +
-    pad(date.getUTCMonth()+1) +
-    pad(date.getUTCDate()) + 'T' +
+    pad(date.getUTCMonth() + 1) +
+    pad(date.getUTCDate()) +
+    'T' +
     pad(date.getUTCHours()) +
     pad(date.getUTCMinutes()) +
-    pad(date.getUTCSeconds()) + 'Z'
+    pad(date.getUTCSeconds()) +
+    'Z'
   );
 }
 
-function nextOccurrenceForInterval(cfg) {
-  let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
-  if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
-  const now = Date.now();
-  const next = new Date(now + intervalMin * MIN);
+function nextOccurrenceForInterval(config) {
+  let intervalMinutes = Number.parseInt(
+    config?.intervalMinutes || 60,
+    10
+  );
+
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5) {
+    intervalMinutes = 5;
+  }
+
+  const next = new Date(Date.now() + intervalMinutes * MIN);
   next.setSeconds(0, 0);
   return next;
 }
 
 function byDayList(daysOfWeek) {
   if (!Array.isArray(daysOfWeek) || daysOfWeek.length !== 7) return null;
-  const map = ['SU','MO','TU','WE','TH','FR','SA'];
-  const out = [];
-  for (let i = 0; i < 7; i++) if (daysOfWeek[i]) out.push(map[i]);
-  return out.length && out.length < 7 ? out : null; // only specify when it's a subset
+
+  const dayNames = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const selectedDays = [];
+
+  for (let index = 0; index < 7; index += 1) {
+    if (daysOfWeek[index]) selectedDays.push(dayNames[index]);
+  }
+
+  return selectedDays.length && selectedDays.length < 7
+    ? selectedDays
+    : null;
 }
 
-export function buildICS(cfg, horizonDays = 60) {
-  const scheduleType = cfg?.scheduleType || 'fixed-times';
+export function buildICS(config, horizonDays = 60) {
+  const scheduleType = config?.scheduleType || 'fixed-times';
 
   if (scheduleType === 'interval') {
-    // Use a single recurring VEVENT with RRULE
-    let intervalMin = parseInt(cfg?.intervalMinutes || 60, 10);
-    if (!Number.isFinite(intervalMin) || intervalMin < 5) intervalMin = 5;
+    let intervalMinutes = Number.parseInt(
+      config?.intervalMinutes || 60,
+      10
+    );
 
-    const byday = byDayList(cfg?.daysOfWeek);
-    const freq = (intervalMin % 60 === 0) ? 'HOURLY' : 'MINUTELY';
-    const intervalVal = (freq === 'HOURLY') ? Math.max(1, Math.floor(intervalMin / 60)) : intervalMin;
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5) {
+      intervalMinutes = 5;
+    }
 
-    const dtstart = nextOccurrenceForInterval(cfg);
+    const selectedDays = byDayList(config?.daysOfWeek);
+    const frequency =
+      intervalMinutes % 60 === 0 ? 'HOURLY' : 'MINUTELY';
+    const intervalValue =
+      frequency === 'HOURLY'
+        ? Math.max(1, Math.floor(intervalMinutes / 60))
+        : intervalMinutes;
+    const start = nextOccurrenceForInterval(config);
     const lines = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
@@ -340,38 +494,52 @@ export function buildICS(cfg, horizonDays = 60) {
       'BEGIN:VEVENT',
       `UID:${SCHEDULE_TAG_PREFIX}interval@closetprayer.com`,
       `DTSTAMP:${toICSDateUTC(new Date())}`,
-      `DTSTART:${toICSDateUTC(dtstart)}`,
+      `DTSTART:${toICSDateUTC(start)}`,
       'SUMMARY:Pray',
       'DESCRIPTION:Open Closet Prayer to see details or pick a request.',
-      `RRULE:FREQ=${freq};INTERVAL=${intervalVal}${byday ? `;BYDAY=${byday.join(',')}` : ''}`,
+      `RRULE:FREQ=${frequency};INTERVAL=${intervalValue}${
+        selectedDays ? `;BYDAY=${selectedDays.join(',')}` : ''
+      }`,
       'END:VEVENT',
-      'END:VCALENDAR'
+      'END:VCALENDAR',
     ];
+
     return lines.join('\r\n');
   }
 
-  // fixed-times: enumerate occurrences (previous behavior)
-  const timestamps = buildUpcomingSchedule(cfg, { horizonDays, maxOccurrences: 256 });
+  const timestamps = buildUpcomingSchedule(config, {
+    horizonDays,
+    maxOccurrences: 256,
+  });
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//ClosetPrayer//Notifications//EN',
     'CALSCALE:GREGORIAN',
   ];
-  const summaryBase = (cfg.mode === 'simple') ? 'Remember to pray' :
-                      (cfg.mode === 'random') ? 'Pray (random request)' :
-                      (cfg.mode === 'ordered-category') ? 'Pray (focused category)' :
-                      (cfg.mode === 'ordered-requestor') ? 'Pray (focused requestor)' : 'Pray';
+  const summary =
+    config.mode === 'simple'
+      ? 'Remember to pray'
+      : config.mode === 'random'
+        ? 'Pray (random request)'
+        : config.mode === 'ordered-category'
+          ? 'Pray (focused category)'
+          : config.mode === 'ordered-requestor'
+            ? 'Pray (focused requestor)'
+            : 'Pray';
 
-  for (const ts of timestamps) {
-    const dt = new Date(ts);
-    const uid = `${SCHEDULE_TAG_PREFIX}${ts}@closetprayer.com`;
+  for (const timestamp of timestamps) {
+    const date = new Date(timestamp);
+    const uid = `${SCHEDULE_TAG_PREFIX}${timestamp}@closetprayer.com`;
+
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);
     lines.push(`DTSTAMP:${toICSDateUTC(new Date())}`);
-    lines.push(`DTSTART:${toICSDateUTC(dt)}`);
-    lines.push(`SUMMARY:${summaryBase}`);
-    lines.push('DESCRIPTION:Open Closet Prayer to see details or pick a request.');
+    lines.push(`DTSTART:${toICSDateUTC(date)}`);
+    lines.push(`SUMMARY:${summary}`);
+    lines.push(
+      'DESCRIPTION:Open Closet Prayer to see details or pick a request.'
+    );
     lines.push('END:VEVENT');
   }
 
@@ -379,16 +547,23 @@ export function buildICS(cfg, horizonDays = 60) {
   return lines.join('\r\n');
 }
 
-export function downloadICS(icsText, fileName = 'closet-prayer-reminders.ics') {
-  const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
+export function downloadICS(
+  icsText,
+  fileName = 'closet-prayer-reminders.ics'
+) {
+  const blob = new Blob([icsText], {
+    type: 'text/calendar;charset=utf-8',
+  });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
+  const anchor = document.createElement('a');
+
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+
   setTimeout(() => {
-    document.body.removeChild(a);
+    document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
   }, 0);
 }
