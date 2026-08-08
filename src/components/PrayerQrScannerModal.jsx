@@ -177,9 +177,20 @@ export default function PrayerQrScannerModal({ onClose }) {
     setError('');
     setStatus('Starting camera…');
 
+    if (!window.isSecureContext) {
+      setCameraState('error');
+      setStatus('Secure connection required.');
+      setError(
+        'Camera scanning requires HTTPS (or localhost). A phone opening the Vite dev server through a LAN http:// address is not a secure browser context. Use the deployed HTTPS app or serve the local build through a trusted HTTPS URL.'
+      );
+      return;
+    }
+
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraState('error');
-      setError('Camera access is not supported by this browser.');
+      setError(
+        'Camera access is unavailable in this browser context. Confirm that this page is using HTTPS and that camera permission is allowed for the site.'
+      );
       return;
     }
 
@@ -322,7 +333,7 @@ export default function PrayerQrScannerModal({ onClose }) {
               )}
 
               <p className="mt-3 text-xs text-gray-400">
-                Camera access is used only for QR sharing. Frames are processed locally in this app and are not uploaded or stored.
+                Camera access is used only for QR sharing. Frames are processed locally in this app and are not uploaded or stored. Camera access requires a secure HTTPS context; LAN HTTP development URLs cannot request camera permission on mobile browsers.
               </p>
 
               <div className="mt-4 flex gap-2">

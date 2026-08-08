@@ -43,6 +43,13 @@ const DEFAULT_NOTIFICATION_CONFIG = {
   requestorId: null,
 };
 
+// In-memory only: preserves a selected backup if Settings is remounted while
+// the page stays open. Nothing is written to localStorage/sessionStorage.
+let transientBackupImportCache = {
+  text: '',
+  preview: null,
+};
+
 function isStandalone() {
   const displayMode = window.matchMedia
     ? window.matchMedia('(display-mode: standalone)')
@@ -486,7 +493,12 @@ export default function Settings() {
   const backupFileRef = useRef(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
-  const [backupPreview, setBackupPreview] = useState(null);
+  const [backupPreview, setBackupPreview] = useState(
+    () => transientBackupImportCache.preview
+  );
+  const [backupFileText, setBackupFileText] = useState(
+    () => transientBackupImportCache.text
+  );
 
   function parseBackupPreview(text, fileName = 'backup.json') {
     try {
@@ -540,9 +552,18 @@ export default function Settings() {
   }
 
   function resetBackupFileInput() {
+    transientBackupImportCache.text = '';
+    setBackupFileText('');
     if (backupFileRef.current) {
       backupFileRef.current.value = '';
     }
+  }
+
+  function clearSelectedBackup() {
+    transientBackupImportCache.preview = null;
+    setBackupPreview(null);
+    setBackupMessage('');
+    resetBackupFileInput();
   }
 
   async function handleExportBackup() {
@@ -571,14 +592,16 @@ export default function Settings() {
 
     const file = event.target?.files?.[0];
 
-    if (!file) {
-      setBackupPreview(null);
-      return;
-    }
+    // Some mobile browsers can emit a follow-up empty file-input change/cancel
+    // after the picker closes. Keep the already parsed backup instead of
+    // silently disabling the import buttons.
+    if (!file) return;
 
     try {
       const text = await file.text();
       const preview = parseBackupPreview(text, file.name);
+      transientBackupImportCache = { text, preview };
+      setBackupFileText(text);
       setBackupPreview(preview);
 
       if (!preview.valid) {
@@ -659,7 +682,7 @@ export default function Settings() {
         if (!secret) return;
 
         await importSmartFromFileText(
-          JSON.stringify(backupPreview.raw),
+          backupFileText || JSON.stringify(backupPreview.raw),
           {
             mode,
             secretKind:
@@ -669,7 +692,7 @@ export default function Settings() {
         );
       } else {
         await importSmartFromFileText(
-          JSON.stringify(backupPreview.raw),
+          backupFileText || JSON.stringify(backupPreview.raw),
           { mode }
         );
       }
@@ -680,6 +703,7 @@ export default function Settings() {
           ? 'Portable graft imported successfully. Existing unrelated data was preserved.'
           : `Import (${mode}) complete.`
       );
+      transientBackupImportCache.preview = null;
       setBackupPreview(null);
       resetBackupFileInput();
     } catch (error) {
@@ -1218,6 +1242,17 @@ export default function Settings() {
               className="hidden"
             />
           </label>
+
+          {backupPreview?.valid && (
+            <button
+              type="button"
+              onClick={clearSelectedBackup}
+              disabled={backupBusy}
+              className="px-3 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 disabled:opacity-50"
+            >
+              Clear selection
+            </button>
+          )}
 
           <button
             type="button"
