@@ -43,12 +43,61 @@ const DEFAULT_NOTIFICATION_CONFIG = {
   requestorId: null,
 };
 
-// In-memory only: preserves a selected backup if Settings is remounted while
-// the page stays open. Nothing is written to localStorage/sessionStorage.
-let transientBackupImportCache = {
-  text: '',
-  preview: null,
-};
+// In-memory only: preserves a selected backup across Settings remounts and
+// Vite hot-module replacement while the page itself remains open. Backup file
+// contents are never persisted to localStorage/sessionStorage.
+const BACKUP_CACHE_GLOBAL_KEY = '__closetPrayerBackupImportCacheV2';
+const BACKUP_DEBUG_STORAGE_KEY = 'cp:backup-debug-events:v1';
+const BACKUP_DEBUG_EVENT_LIMIT = 80;
+
+function getBackupImportCache() {
+  if (typeof window === 'undefined') {
+    return { text: '', preview: null, selectedAt: null };
+  }
+
+  if (!window[BACKUP_CACHE_GLOBAL_KEY]) {
+    window[BACKUP_CACHE_GLOBAL_KEY] = {
+      text: '',
+      preview: null,
+      selectedAt: null,
+    };
+  }
+
+  return window[BACKUP_CACHE_GLOBAL_KEY];
+}
+
+function readBackupDebugEvents() {
+  try {
+    const parsed = JSON.parse(
+      window.sessionStorage.getItem(BACKUP_DEBUG_STORAGE_KEY) || '[]'
+    );
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendBackupDebugEvent(eventName, details = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    event: eventName,
+    ...details,
+  };
+
+  console.info('[ClosetPrayer BackupDebug]', entry);
+
+  try {
+    const current = readBackupDebugEvents();
+    const next = [...current, entry].slice(-BACKUP_DEBUG_EVENT_LIMIT);
+    window.sessionStorage.setItem(
+      BACKUP_DEBUG_STORAGE_KEY,
+      JSON.stringify(next)
+    );
+    return next;
+  } catch {
+    return [entry];
+  }
+}
 
 function isStandalone() {
   const displayMode = window.matchMedia
@@ -491,14 +540,91 @@ export default function Settings() {
   // Backup and Restore
   // -------------------------------------------------------------------------
   const backupFileRef = useRef(null);
+  const backupReadTokenRef = useRef(0);
+  const initialBackupCacheRef = useRef(getBackupImportCache());
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
   const [backupPreview, setBackupPreview] = useState(
-    () => transientBackupImportCache.preview
+    () => initialBackupCacheRef.current.preview
   );
   const [backupFileText, setBackupFileText] = useState(
-    () => transientBackupImportCache.text
+    () => initialBackupCacheRef.current.text
   );
+  const [showBackupDebug, setShowBackupDebug] = useState(false);
+  const [backupDebugEvents, setBackupDebugEvents] = useState(
+    () => readBackupDebugEvents()
+  );
+
+  const cachedBackup = getBackupImportCache();
+  const effectiveBackupPreview =
+    backupPreview?.valid ? backupPreview : cachedBackup.preview;
+  const effectiveBackupFileText = backupFileText || cachedBackup.text || '';
+
+  function recordBackupDebug(eventName, details = {}) {
+    setBackupDebugEvents(appendBackupDebugEvent(eventName, details));
+  }
+
+  useEffect(() => {
+    const cache = getBackupImportCache();
+    setBackupDebugEvents(
+      appendBackupDebugEvent('settings-mounted', {
+        cachedSelection: Boolean(cache.preview?.valid),
+        cachedFileName: cache.preview?.fileName || null,
+        cachedTextLength: cache.text?.length || 0,
+      })
+    );
+
+    const onVisibilityChange = () => {
+      setBackupDebugEvents(
+        appendBackupDebugEvent('visibility-change', {
+          visibilityState: document.visibilityState,
+          cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+        })
+      );
+    };
+
+    const onPageShow = (event) => {
+      setBackupDebugEvents(
+        appendBackupDebugEvent('pageshow', {
+          persisted: Boolean(event.persisted),
+          cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+        })
+      );
+    };
+
+    const onPageHide = (event) => {
+      appendBackupDebugEvent('pagehide', {
+        persisted: Boolean(event.persisted),
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+    };
+
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      appendBackupDebugEvent('settings-unmounted', {
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const cache = getBackupImportCache();
+
+    if (!backupPreview?.valid && cache.preview?.valid) {
+      setBackupPreview(cache.preview);
+      setBackupFileText(cache.text || '');
+      recordBackupDebug('selection-resynced-from-memory', {
+        fileName: cache.preview.fileName || null,
+        textLength: cache.text?.length || 0,
+      });
+    }
+  }, [backupPreview]);
 
   function parseBackupPreview(text, fileName = 'backup.json') {
     try {
@@ -551,37 +677,69 @@ export default function Settings() {
     }
   }
 
-  function resetBackupFileInput() {
-    transientBackupImportCache.text = '';
-    setBackupFileText('');
+  function resetBackupFileInputElement() {
     if (backupFileRef.current) {
       backupFileRef.current.value = '';
     }
   }
 
-  function clearSelectedBackup() {
-    transientBackupImportCache.preview = null;
+  function commitBackupSelection(text, preview) {
+    const cache = getBackupImportCache();
+    cache.text = text;
+    cache.preview = preview;
+    cache.selectedAt = Date.now();
+
+    setBackupFileText(text);
+    setBackupPreview(preview);
+
+    recordBackupDebug('selection-committed', {
+      fileName: preview?.fileName || null,
+      valid: Boolean(preview?.valid),
+      encrypted: Boolean(preview?.encrypted),
+      portable: Boolean(preview?.portable),
+      textLength: text?.length || 0,
+    });
+  }
+
+  function clearSelectedBackup(reason = 'manual-clear') {
+    backupReadTokenRef.current += 1;
+
+    const cache = getBackupImportCache();
+    cache.text = '';
+    cache.preview = null;
+    cache.selectedAt = null;
+
+    setBackupFileText('');
     setBackupPreview(null);
     setBackupMessage('');
-    resetBackupFileInput();
+    resetBackupFileInputElement();
+
+    recordBackupDebug('selection-cleared', { reason });
   }
 
   async function handleExportBackup() {
     try {
       setBackupBusy(true);
       setBackupMessage('');
-      setBackupPreview(null);
+      recordBackupDebug('export-started', {
+        selectionPreserved: Boolean(effectiveBackupPreview?.valid),
+      });
 
       const result = await exportSmartJson();
       downloadJson(result.text, result.fileName);
       setBackupMessage(
-        vaultEnabled
-          ? 'Encrypted backup exported.'
-          : 'Backup exported as JSON.'
+        vaultEnabled ? 'Encrypted backup exported.' : 'Backup exported as JSON.'
       );
+      recordBackupDebug('export-finished', {
+        exportedFileName: result.fileName || null,
+        selectionPreserved: Boolean(getBackupImportCache().preview?.valid),
+      });
     } catch (error) {
       console.error(error);
       setBackupMessage(error?.message || 'Backup export failed.');
+      recordBackupDebug('export-failed', {
+        error: error?.message || String(error),
+      });
     } finally {
       setBackupBusy(false);
     }
@@ -590,23 +748,62 @@ export default function Settings() {
   async function handleBackupFileChange(event) {
     setBackupMessage('');
 
-    const file = event.target?.files?.[0];
+    const input = event.currentTarget;
+    const file = input?.files?.[0];
 
-    // Some mobile browsers can emit a follow-up empty file-input change/cancel
-    // after the picker closes. Keep the already parsed backup instead of
-    // silently disabling the import buttons.
-    if (!file) return;
+    if (!file) {
+      recordBackupDebug('file-change-empty', {
+        existingSelection: Boolean(getBackupImportCache().preview?.valid),
+        inputFileCount: input?.files?.length || 0,
+      });
+      return;
+    }
+
+    const readToken = ++backupReadTokenRef.current;
+    const hadPreviousSelection = Boolean(
+      getBackupImportCache().preview?.valid
+    );
+
+    recordBackupDebug('file-read-started', {
+      readToken,
+      fileName: file.name || null,
+      fileSize: Number.isFinite(file.size) ? file.size : null,
+      fileType: file.type || null,
+      hadPreviousSelection,
+    });
 
     try {
       const text = await file.text();
+
+      if (readToken !== backupReadTokenRef.current) {
+        recordBackupDebug('file-read-ignored-stale', {
+          readToken,
+          fileName: file.name || null,
+        });
+        return;
+      }
+
       const preview = parseBackupPreview(text, file.name);
-      transientBackupImportCache = { text, preview };
-      setBackupFileText(text);
-      setBackupPreview(preview);
 
       if (!preview.valid) {
-        setBackupMessage(`Could not read backup: ${preview.error}`);
-      } else if (preview.encrypted) {
+        resetBackupFileInputElement();
+        setBackupMessage(
+          hadPreviousSelection
+            ? `Could not read ${file.name || 'the new file'} as a backup. Your previous backup selection is still ready to import.`
+            : `Could not read backup: ${preview.error}`
+        );
+        recordBackupDebug('file-parse-invalid', {
+          readToken,
+          fileName: file.name || null,
+          error: preview.error || 'Invalid backup',
+          previousSelectionRetained: hadPreviousSelection,
+        });
+        return;
+      }
+
+      commitBackupSelection(text, preview);
+
+      if (preview.encrypted) {
         setBackupMessage(
           preview.portable
             ? `Encrypted portable graft detected: ${preview.fileName}`
@@ -628,21 +825,53 @@ export default function Settings() {
       }
     } catch (error) {
       console.error(error);
-      setBackupPreview(null);
-      setBackupMessage('Failed to read the selected backup file.');
+
+      if (readToken !== backupReadTokenRef.current) {
+        recordBackupDebug('file-read-error-ignored-stale', {
+          readToken,
+          fileName: file.name || null,
+          error: error?.message || String(error),
+        });
+        return;
+      }
+
+      resetBackupFileInputElement();
+      const previousStillAvailable = Boolean(
+        getBackupImportCache().preview?.valid
+      );
+      setBackupMessage(
+        previousStillAvailable
+          ? 'The browser failed to read the new file, but your previous backup selection is still ready to import.'
+          : 'Failed to read the selected backup file.'
+      );
+      recordBackupDebug('file-read-failed', {
+        readToken,
+        fileName: file.name || null,
+        error: error?.message || String(error),
+        previousSelectionRetained: previousStillAvailable,
+      });
     }
   }
 
   async function handleImportBackup(mode) {
-    if (!backupPreview?.valid || !backupPreview?.raw) {
+    const cache = getBackupImportCache();
+    const activePreview =
+      effectiveBackupPreview?.valid ? effectiveBackupPreview : cache.preview;
+    const activeText = effectiveBackupFileText || cache.text || '';
+
+    if (!activePreview?.valid || !activePreview?.raw) {
       setBackupMessage('Choose a valid backup file first.');
+      recordBackupDebug('import-blocked-no-selection', { mode });
       return;
     }
 
-    if (mode === 'replace' && backupPreview.portable) {
+    if (mode === 'replace' && activePreview.portable) {
       setBackupMessage(
         'Portable branch exports must be imported with Merge so they can be grafted into the current database.'
       );
+      recordBackupDebug('import-blocked-portable-replace', {
+        fileName: activePreview.fileName || null,
+      });
       return;
     }
 
@@ -652,24 +881,41 @@ export default function Settings() {
         'Replace will erase all current app data before importing this backup. Continue?'
       )
     ) {
+      recordBackupDebug('import-replace-cancelled', {
+        fileName: activePreview.fileName || null,
+      });
       return;
     }
 
     try {
       setBackupBusy(true);
       setBackupMessage('');
+      recordBackupDebug('import-started', {
+        mode,
+        fileName: activePreview.fileName || null,
+        encrypted: Boolean(activePreview.encrypted),
+        portable: Boolean(activePreview.portable),
+        textLength: activeText.length,
+      });
 
-      if (backupPreview.encrypted) {
+      if (activePreview.encrypted) {
         const method = window.prompt(
           'Encrypted backup detected. Type "pass" to use the passphrase or "recovery" to use the Recovery Code:'
         );
 
-        if (!method) return;
+        if (!method) {
+          recordBackupDebug('import-unlock-cancelled', { mode });
+          return;
+        }
 
         const normalizedMethod = method.trim().toLowerCase();
 
         if (normalizedMethod !== 'pass' && normalizedMethod !== 'recovery') {
           setBackupMessage('Import cancelled: unknown unlock method.');
+          recordBackupDebug('import-unlock-method-invalid', {
+            mode,
+            method: normalizedMethod,
+          });
           return;
         }
 
@@ -679,10 +925,13 @@ export default function Settings() {
             : 'Enter the backup Recovery Code:'
         );
 
-        if (!secret) return;
+        if (!secret) {
+          recordBackupDebug('import-secret-cancelled', { mode });
+          return;
+        }
 
         await importSmartFromFileText(
-          backupFileText || JSON.stringify(backupPreview.raw),
+          activeText || JSON.stringify(activePreview.raw),
           {
             mode,
             secretKind:
@@ -692,28 +941,80 @@ export default function Settings() {
         );
       } else {
         await importSmartFromFileText(
-          backupFileText || JSON.stringify(backupPreview.raw),
+          activeText || JSON.stringify(activePreview.raw),
           { mode }
         );
       }
 
       emitDbChanged();
       setBackupMessage(
-        backupPreview.portable
+        activePreview.portable
           ? 'Portable graft imported successfully. Existing unrelated data was preserved.'
           : `Import (${mode}) complete.`
       );
-      transientBackupImportCache.preview = null;
-      setBackupPreview(null);
-      resetBackupFileInput();
+      recordBackupDebug('import-succeeded', {
+        mode,
+        fileName: activePreview.fileName || null,
+      });
+      clearSelectedBackup('successful-import');
     } catch (error) {
       console.error(error);
       setBackupMessage(
         `Import (${mode}) failed. ${error?.message || ''}`.trim()
       );
+      recordBackupDebug('import-failed', {
+        mode,
+        fileName: activePreview?.fileName || null,
+        error: error?.message || String(error),
+        selectionRetained: Boolean(getBackupImportCache().preview?.valid),
+      });
     } finally {
       setBackupBusy(false);
     }
+  }
+
+  async function handleCopyBackupDiagnostics() {
+    const cache = getBackupImportCache();
+    const diagnostics = {
+      capturedAt: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      visibilityState: document.visibilityState,
+      state: {
+        backupBusy,
+        stateHasPreview: Boolean(backupPreview?.valid),
+        effectiveHasPreview: Boolean(effectiveBackupPreview?.valid),
+        fileName: effectiveBackupPreview?.fileName || null,
+        encrypted: Boolean(effectiveBackupPreview?.encrypted),
+        portable: Boolean(effectiveBackupPreview?.portable),
+        stateTextLength: backupFileText.length,
+        cachedTextLength: cache.text?.length || 0,
+        cacheSelectedAt: cache.selectedAt || null,
+        inputFileCount: backupFileRef.current?.files?.length || 0,
+      },
+      events: backupDebugEvents,
+    };
+
+    const text = JSON.stringify(diagnostics, null, 2);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setBackupMessage(
+        'Backup diagnostics copied to the clipboard. No backup contents were included.'
+      );
+    } catch (error) {
+      console.info('[ClosetPrayer BackupDebug] Diagnostics payload:', diagnostics);
+      setBackupMessage(
+        'Clipboard access was unavailable. Backup diagnostics were written to the browser console instead.'
+      );
+    }
+  }
+
+  function clearBackupDebugLog() {
+    try {
+      window.sessionStorage.removeItem(BACKUP_DEBUG_STORAGE_KEY);
+    } catch {}
+    setBackupDebugEvents([]);
+    console.info('[ClosetPrayer BackupDebug] Debug log cleared.');
   }
 
   return (
@@ -1216,9 +1517,18 @@ export default function Settings() {
       </section>
 
       <section className="bg-gray-800 rounded-lg p-4 shadow mb-6">
-        <h3 className="text-lg font-semibold text-white mb-3">
-          Backup &amp; Restore
-        </h3>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="text-lg font-semibold text-white">
+            Backup &amp; Restore
+          </h3>
+          <button
+            type="button"
+            onClick={() => setShowBackupDebug((current) => !current)}
+            className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-white"
+          >
+            {showBackupDebug ? 'Hide diagnostics' : 'Show diagnostics'}
+          </button>
+        </div>
 
         <div className="flex flex-wrap gap-2 items-center mb-4">
           <button
@@ -1243,7 +1553,7 @@ export default function Settings() {
             />
           </label>
 
-          {backupPreview?.valid && (
+          {effectiveBackupPreview?.valid && (
             <button
               type="button"
               onClick={clearSelectedBackup}
@@ -1257,7 +1567,7 @@ export default function Settings() {
           <button
             type="button"
             onClick={() => handleImportBackup('merge')}
-            disabled={backupBusy || !backupPreview?.valid}
+            disabled={backupBusy || !effectiveBackupPreview?.valid}
             className="px-3 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
           >
             Import (Merge)
@@ -1268,12 +1578,12 @@ export default function Settings() {
             onClick={() => handleImportBackup('replace')}
             disabled={
               backupBusy ||
-              !backupPreview?.valid ||
-              Boolean(backupPreview?.portable)
+              !effectiveBackupPreview?.valid ||
+              Boolean(effectiveBackupPreview?.portable)
             }
             className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
             title={
-              backupPreview?.portable
+              effectiveBackupPreview?.portable
                 ? 'Portable grafts must use Merge Import'
                 : 'Erase current data and restore this full backup'
             }
@@ -1282,51 +1592,116 @@ export default function Settings() {
           </button>
         </div>
 
-        {backupPreview?.valid && !backupPreview.encrypted && (
+        {showBackupDebug && (
+          <div className="mb-4 rounded bg-gray-900 p-3 text-xs text-gray-300 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-gray-100">Backup diagnostics</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyBackupDiagnostics}
+                  className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-white"
+                >
+                  Copy diagnostics
+                </button>
+                <button
+                  type="button"
+                  onClick={clearBackupDebugLog}
+                  className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-white"
+                >
+                  Clear log
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <span className="text-gray-500">Selected</span>
+              <span>{effectiveBackupPreview?.valid ? 'yes' : 'no'}</span>
+              <span className="text-gray-500">File</span>
+              <span className="break-all">{effectiveBackupPreview?.fileName || '—'}</span>
+              <span className="text-gray-500">Busy</span>
+              <span>{backupBusy ? 'yes' : 'no'}</span>
+              <span className="text-gray-500">State text</span>
+              <span>{backupFileText.length.toLocaleString()} chars</span>
+              <span className="text-gray-500">Memory cache</span>
+              <span>{(getBackupImportCache().text?.length || 0).toLocaleString()} chars</span>
+              <span className="text-gray-500">File input</span>
+              <span>{backupFileRef.current?.files?.length || 0} file(s)</span>
+            </div>
+
+            <p className="text-gray-500">
+              The log contains metadata only—never the contents of your backup.
+            </p>
+
+            <div className="max-h-48 overflow-y-auto rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed">
+              {backupDebugEvents.length === 0 ? (
+                <p className="text-gray-500">No debug events recorded.</p>
+              ) : (
+                backupDebugEvents.slice().reverse().map((entry, index) => (
+                  <div key={`${entry.at}-${index}`} className="mb-1 break-words">
+                    <span className="text-gray-500">{entry.at}</span>{' '}
+                    <span className="text-gray-200">{entry.event}</span>{' '}
+                    <span className="text-gray-500">
+                      {JSON.stringify(
+                        Object.fromEntries(
+                          Object.entries(entry).filter(
+                            ([key]) => key !== 'at' && key !== 'event'
+                          )
+                        )
+                      )}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {effectiveBackupPreview?.valid && !effectiveBackupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
             <p className="mb-1 flex flex-wrap items-center gap-2">
               <span className="font-semibold">
-                {backupPreview.portable
+                {effectiveBackupPreview.portable
                   ? 'Portable graft ready:'
                   : 'Ready to import:'}
               </span>{' '}
-              <span>{backupPreview.fileName}</span>
-              {backupPreview.portable && (
+              <span>{effectiveBackupPreview.fileName}</span>
+              {effectiveBackupPreview.portable && (
                 <span className="rounded bg-emerald-700 px-2 py-0.5 text-xs text-white">
                   Merge only
                 </span>
               )}
             </p>
-            {backupPreview.portable && backupPreview.selection?.label && (
+            {effectiveBackupPreview.portable && effectiveBackupPreview.selection?.label && (
               <p className="mb-2 text-gray-400">
-                Selection: {backupPreview.selection.label}
+                Selection: {effectiveBackupPreview.selection.label}
               </p>
             )}
             <ul className="list-disc list-inside">
-              <li>Categories: {backupPreview.counts.categories}</li>
-              <li>Requestors: {backupPreview.counts.requestors}</li>
-              <li>Prayers: {backupPreview.counts.prayers}</li>
-              <li>Events: {backupPreview.counts.events}</li>
+              <li>Categories: {effectiveBackupPreview.counts.categories}</li>
+              <li>Requestors: {effectiveBackupPreview.counts.requestors}</li>
+              <li>Prayers: {effectiveBackupPreview.counts.prayers}</li>
+              <li>Events: {effectiveBackupPreview.counts.events}</li>
               <li>
-                Journal entries: {backupPreview.counts.journalEntries}
+                Journal entries: {effectiveBackupPreview.counts.journalEntries}
               </li>
             </ul>
           </div>
         )}
 
-        {backupPreview?.valid && backupPreview.encrypted && (
+        {effectiveBackupPreview?.valid && effectiveBackupPreview.encrypted && (
           <div className="text-gray-300 text-sm">
             <p>
               <span className="font-semibold">
-                {backupPreview.portable
+                {effectiveBackupPreview.portable
                   ? 'Encrypted portable graft detected:'
                   : 'Encrypted backup detected:'}
               </span>{' '}
-              {backupPreview.fileName}
+              {effectiveBackupPreview.fileName}
             </p>
             <p className="text-xs text-gray-400 mt-1">
               Import will request its passphrase or Recovery Code.
-              {backupPreview.portable
+              {effectiveBackupPreview.portable
                 ? ' Portable grafts must use Merge Import.'
                 : ''}
             </p>
