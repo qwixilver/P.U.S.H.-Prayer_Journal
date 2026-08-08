@@ -48,7 +48,8 @@ const DEFAULT_NOTIFICATION_CONFIG = {
 // contents are never persisted to localStorage/sessionStorage.
 const BACKUP_CACHE_GLOBAL_KEY = '__closetPrayerBackupImportCacheV2';
 const BACKUP_DEBUG_STORAGE_KEY = 'cp:backup-debug-events:v1';
-const BACKUP_DEBUG_EVENT_LIMIT = 80;
+const BACKUP_DEBUG_ENABLED_KEY = 'cp:backup-debug-enabled:v1';
+const BACKUP_DEBUG_EVENT_LIMIT = 120;
 
 function getBackupImportCache() {
   if (typeof window === 'undefined') {
@@ -75,6 +76,24 @@ function readBackupDebugEvents() {
   } catch {
     return [];
   }
+}
+
+function readBackupDebugEnabled() {
+  try {
+    return window.sessionStorage.getItem(BACKUP_DEBUG_ENABLED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeBackupDebugEnabled(enabled) {
+  try {
+    if (enabled) {
+      window.sessionStorage.setItem(BACKUP_DEBUG_ENABLED_KEY, '1');
+    } else {
+      window.sessionStorage.removeItem(BACKUP_DEBUG_ENABLED_KEY);
+    }
+  } catch {}
 }
 
 function appendBackupDebugEvent(eventName, details = {}) {
@@ -550,7 +569,9 @@ export default function Settings() {
   const [backupFileText, setBackupFileText] = useState(
     () => initialBackupCacheRef.current.text
   );
-  const [showBackupDebug, setShowBackupDebug] = useState(false);
+  const [showBackupDebug, setShowBackupDebug] = useState(
+    () => readBackupDebugEnabled()
+  );
   const [backupDebugEvents, setBackupDebugEvents] = useState(
     () => readBackupDebugEvents()
   );
@@ -566,8 +587,15 @@ export default function Settings() {
 
   useEffect(() => {
     const cache = getBackupImportCache();
+    const navigationEntry = performance.getEntriesByType?.('navigation')?.[0];
+    const navigationType = navigationEntry?.type || 'unknown';
+
     setBackupDebugEvents(
       appendBackupDebugEvent('settings-mounted', {
+        navigationType,
+        href: window.location.href,
+        secureContext: window.isSecureContext,
+        online: navigator.onLine,
         cachedSelection: Boolean(cache.preview?.valid),
         cachedFileName: cache.preview?.fileName || null,
         cachedTextLength: cache.text?.length || 0,
@@ -587,6 +615,8 @@ export default function Settings() {
       setBackupDebugEvents(
         appendBackupDebugEvent('pageshow', {
           persisted: Boolean(event.persisted),
+          navigationType:
+            performance.getEntriesByType?.('navigation')?.[0]?.type || 'unknown',
           cachedSelection: Boolean(getBackupImportCache().preview?.valid),
         })
       );
@@ -599,9 +629,52 @@ export default function Settings() {
       });
     };
 
+    const onBeforeUnload = () => {
+      appendBackupDebugEvent('beforeunload', {
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+    };
+
+    const onOnline = () => {
+      setBackupDebugEvents(appendBackupDebugEvent('network-online'));
+    };
+
+    const onOffline = () => {
+      setBackupDebugEvents(appendBackupDebugEvent('network-offline'));
+    };
+
+    const onViteBeforeFullReload = (payload) => {
+      appendBackupDebugEvent('vite-before-full-reload', {
+        path: payload?.path || null,
+        triggeredBy: payload?.triggeredBy || null,
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+    };
+
+    const onViteWsDisconnect = () => {
+      appendBackupDebugEvent('vite-ws-disconnect', {
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+    };
+
+    const onViteWsConnect = () => {
+      appendBackupDebugEvent('vite-ws-connect', {
+        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+      });
+    };
+
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
     document.addEventListener('visibilitychange', onVisibilityChange);
+
+    if (import.meta.hot) {
+      import.meta.hot.on('vite:beforeFullReload', onViteBeforeFullReload);
+      import.meta.hot.on('vite:ws:disconnect', onViteWsDisconnect);
+      import.meta.hot.on('vite:ws:connect', onViteWsConnect);
+    }
 
     return () => {
       appendBackupDebugEvent('settings-unmounted', {
@@ -609,7 +682,16 @@ export default function Settings() {
       });
       window.removeEventListener('pageshow', onPageShow);
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+
+      if (import.meta.hot) {
+        import.meta.hot.off('vite:beforeFullReload', onViteBeforeFullReload);
+        import.meta.hot.off('vite:ws:disconnect', onViteWsDisconnect);
+        import.meta.hot.off('vite:ws:connect', onViteWsConnect);
+      }
     };
   }, []);
 
@@ -973,12 +1055,19 @@ export default function Settings() {
     }
   }
 
-  async function handleCopyBackupDiagnostics() {
+  function buildBackupDiagnostics() {
     const cache = getBackupImportCache();
-    const diagnostics = {
+    const navigationEntry = performance.getEntriesByType?.('navigation')?.[0];
+
+    return {
       capturedAt: new Date().toISOString(),
       userAgent: navigator.userAgent,
+      href: window.location.href,
+      secureContext: window.isSecureContext,
+      online: navigator.onLine,
       visibilityState: document.visibilityState,
+      navigationType: navigationEntry?.type || 'unknown',
+      viteHmrAvailable: Boolean(import.meta.hot),
       state: {
         backupBusy,
         stateHasPreview: Boolean(backupPreview?.valid),
@@ -993,7 +1082,14 @@ export default function Settings() {
       },
       events: backupDebugEvents,
     };
+  }
 
+  function getBackupDiagnosticsText() {
+    return JSON.stringify(buildBackupDiagnostics(), null, 2);
+  }
+
+  async function handleCopyBackupDiagnostics() {
+    const diagnostics = buildBackupDiagnostics();
     const text = JSON.stringify(diagnostics, null, 2);
 
     try {
@@ -1004,9 +1100,40 @@ export default function Settings() {
     } catch (error) {
       console.info('[ClosetPrayer BackupDebug] Diagnostics payload:', diagnostics);
       setBackupMessage(
-        'Clipboard access was unavailable. Backup diagnostics were written to the browser console instead.'
+        'Clipboard access is unavailable on this connection. Use Download diagnostics or select the visible report text instead.'
       );
     }
+  }
+
+  function handleDownloadBackupDiagnostics() {
+    try {
+      const text = getBackupDiagnosticsText();
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `closet-prayer-backup-diagnostics-${new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')}.txt`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setBackupMessage(
+        'Backup diagnostics downloaded. The file contains metadata only, never prayer or backup contents.'
+      );
+    } catch (error) {
+      console.error(error);
+      setBackupMessage('Could not download backup diagnostics.');
+    }
+  }
+
+  function toggleBackupDebug() {
+    setShowBackupDebug((current) => {
+      const next = !current;
+      writeBackupDebugEnabled(next);
+      return next;
+    });
   }
 
   function clearBackupDebugLog() {
@@ -1523,7 +1650,7 @@ export default function Settings() {
           </h3>
           <button
             type="button"
-            onClick={() => setShowBackupDebug((current) => !current)}
+            onClick={toggleBackupDebug}
             className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-white"
           >
             {showBackupDebug ? 'Hide diagnostics' : 'Show diagnostics'}
@@ -1606,6 +1733,13 @@ export default function Settings() {
                 </button>
                 <button
                   type="button"
+                  onClick={handleDownloadBackupDiagnostics}
+                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 rounded text-white"
+                >
+                  Download diagnostics
+                </button>
+                <button
+                  type="button"
                   onClick={clearBackupDebugLog}
                   className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-white"
                 >
@@ -1631,7 +1765,19 @@ export default function Settings() {
 
             <p className="text-gray-500">
               The log contains metadata only—never the contents of your backup.
+              Diagnostics stay enabled across a page refresh for this browser tab.
             </p>
+
+            <div>
+              <label className="block text-gray-500 mb-1">Full diagnostics report</label>
+              <textarea
+                readOnly
+                value={getBackupDiagnosticsText()}
+                className="w-full h-40 rounded bg-black/30 p-2 font-mono text-[10px] text-gray-300 leading-relaxed"
+                onFocus={(event) => event.currentTarget.select()}
+                aria-label="Backup diagnostics report"
+              />
+            </div>
 
             <div className="max-h-48 overflow-y-auto rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed">
               {backupDebugEvents.length === 0 ? (
