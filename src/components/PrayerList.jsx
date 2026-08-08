@@ -9,6 +9,8 @@ import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
 import PrayerEventForm from './PrayerEventForm';
 import DataExportButton from './DataExportButton';
+import PrayerQrShareModal from './PrayerQrShareModal';
+import PrayerQrScannerModal from './PrayerQrScannerModal';
 
 const DAILY_FILTER_STORAGE_KEY = 'cp:dailyStatusFilters:v1';
 
@@ -66,6 +68,8 @@ export default function PrayerList({
   const [expanded, setExpanded] = useState({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [qrSharePrayer, setQrSharePrayer] = useState(null);
+  const [showQrScanner, setShowQrScanner] = useState(false);
   const [dailyStatusFilters, setDailyStatusFilters] = useState(
     loadDailyStatusFilters
   );
@@ -361,6 +365,16 @@ export default function PrayerList({
                 Focus
               </button>
             )}
+            {isSecurity && (
+              <button
+                type="button"
+                onClick={() => setQrSharePrayer(prayer)}
+                className="text-sm px-2 py-1 rounded bg-purple-600 hover:bg-purple-700 text-white"
+                title="Share this prayer directly with another Closet Prayer user by QR code"
+              >
+                Share QR
+              </button>
+            )}
             <DataExportButton
               kind="prayer"
               id={prayer.id}
@@ -417,6 +431,17 @@ export default function PrayerList({
         <h2 className="text-2xl font-bold">
           {isSecurity ? 'Security' : 'Daily'} Prayers
         </h2>
+
+        {isSecurity && (
+          <button
+            type="button"
+            onClick={() => setShowQrScanner(true)}
+            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-purple-700"
+            title="Scan a Closet Prayer QR share with this device's camera"
+          >
+            Scan QR
+          </button>
+        )}
 
         {!isSecurity && (
           <div
@@ -543,6 +568,19 @@ export default function PrayerList({
           initialPrayer={editTarget}
           onClose={() => setEditTarget(null)}
           onSuccess={() => setEditTarget(null)}
+        />
+      )}
+
+      {qrSharePrayer && (
+        <PrayerQrShareModal
+          prayerId={qrSharePrayer.id}
+          onClose={() => setQrSharePrayer(null)}
+        />
+      )}
+
+      {showQrScanner && (
+        <PrayerQrScannerModal
+          onClose={() => setShowQrScanner(false)}
         />
       )}
     </div>
