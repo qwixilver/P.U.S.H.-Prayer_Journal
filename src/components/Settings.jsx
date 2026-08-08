@@ -118,6 +118,31 @@ function appendBackupDebugEvent(eventName, details = {}) {
   }
 }
 
+// Vite owns the lifecycle of listeners registered on a module's hot context.
+// Keeping these outside React effects avoids duplicate listeners when
+// StrictMode intentionally mounts and unmounts Settings during development.
+if (import.meta.hot) {
+  import.meta.hot.on('vite:beforeFullReload', (payload) => {
+    appendBackupDebugEvent('vite-before-full-reload', {
+      path: payload?.path || null,
+      triggeredBy: payload?.triggeredBy || null,
+      cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+    });
+  });
+
+  import.meta.hot.on('vite:ws:disconnect', () => {
+    appendBackupDebugEvent('vite-ws-disconnect', {
+      cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+    });
+  });
+
+  import.meta.hot.on('vite:ws:connect', () => {
+    appendBackupDebugEvent('vite-ws-connect', {
+      cachedSelection: Boolean(getBackupImportCache().preview?.valid),
+    });
+  });
+}
+
 function isStandalone() {
   const displayMode = window.matchMedia
     ? window.matchMedia('(display-mode: standalone)')
@@ -643,38 +668,12 @@ export default function Settings() {
       setBackupDebugEvents(appendBackupDebugEvent('network-offline'));
     };
 
-    const onViteBeforeFullReload = (payload) => {
-      appendBackupDebugEvent('vite-before-full-reload', {
-        path: payload?.path || null,
-        triggeredBy: payload?.triggeredBy || null,
-        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
-      });
-    };
-
-    const onViteWsDisconnect = () => {
-      appendBackupDebugEvent('vite-ws-disconnect', {
-        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
-      });
-    };
-
-    const onViteWsConnect = () => {
-      appendBackupDebugEvent('vite-ws-connect', {
-        cachedSelection: Boolean(getBackupImportCache().preview?.valid),
-      });
-    };
-
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onBeforeUnload);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
     document.addEventListener('visibilitychange', onVisibilityChange);
-
-    if (import.meta.hot) {
-      import.meta.hot.on('vite:beforeFullReload', onViteBeforeFullReload);
-      import.meta.hot.on('vite:ws:disconnect', onViteWsDisconnect);
-      import.meta.hot.on('vite:ws:connect', onViteWsConnect);
-    }
 
     return () => {
       appendBackupDebugEvent('settings-unmounted', {
@@ -686,12 +685,6 @@ export default function Settings() {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-
-      if (import.meta.hot) {
-        import.meta.hot.off('vite:beforeFullReload', onViteBeforeFullReload);
-        import.meta.hot.off('vite:ws:disconnect', onViteWsDisconnect);
-        import.meta.hot.off('vite:ws:connect', onViteWsConnect);
-      }
     };
   }, []);
 
