@@ -1,7 +1,7 @@
 // vite.config.js
 // Pages-safe PWA config for Closet Prayer.
-// Use `npm run dev -- --mode mobile` for phone testing when Vite HMR reloads
-// would otherwise interrupt file-picker state or other long-running UI tests.
+// `npm run dev:mobile` builds and previews the production bundle for phone
+// tests where Vite's development client would interrupt file-picker state.
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -9,9 +9,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 const base = '/';
 
-export default defineConfig(({ mode }) => {
-  const mobileTestMode = mode === 'mobile';
-
+export default defineConfig(() => {
   return {
     base,
     plugins: [
@@ -55,9 +53,9 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     server: {
-      host: true,
+      host: '0.0.0.0',
       port: 3000,
-      ...(mobileTestMode ? { hmr: false } : {}),
+      strictPort: true,
     },
     resolve: {
       alias: {

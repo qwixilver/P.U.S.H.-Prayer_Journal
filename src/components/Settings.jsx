@@ -621,6 +621,8 @@ export default function Settings() {
         href: window.location.href,
         secureContext: window.isSecureContext,
         online: navigator.onLine,
+        viteMode: import.meta.env.MODE,
+        viteHmrAvailable: Boolean(import.meta.hot),
         cachedSelection: Boolean(cache.preview?.valid),
         cachedFileName: cache.preview?.fileName || null,
         cachedTextLength: cache.text?.length || 0,
@@ -1060,6 +1062,7 @@ export default function Settings() {
       online: navigator.onLine,
       visibilityState: document.visibilityState,
       navigationType: navigationEntry?.type || 'unknown',
+      viteMode: import.meta.env.MODE,
       viteHmrAvailable: Boolean(import.meta.hot),
       state: {
         backupBusy,
@@ -1741,7 +1744,20 @@ export default function Settings() {
               </div>
             </div>
 
+            {import.meta.hot && (
+              <p className="rounded border border-amber-500/50 bg-amber-950/40 p-2 text-amber-200">
+                Vite hot reload is active. A development-server reconnect can
+                refresh this page and clear the selected backup. Stop all Vite
+                servers and run <code>npm run dev:mobile</code> for mobile backup
+                testing.
+              </p>
+            )}
+
             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <span className="text-gray-500">Vite mode</span>
+              <span>{import.meta.env.MODE}</span>
+              <span className="text-gray-500">Vite HMR</span>
+              <span>{import.meta.hot ? 'active' : 'disabled'}</span>
               <span className="text-gray-500">Selected</span>
               <span>{effectiveBackupPreview?.valid ? 'yes' : 'no'}</span>
               <span className="text-gray-500">File</span>
