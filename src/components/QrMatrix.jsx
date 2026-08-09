@@ -8,9 +8,9 @@ export default function QrMatrix({ value, className = '' }) {
   const matrix = useMemo(() => {
     if (!value) return [];
     return encodeQR(value, 'raw', {
-      ecc: 'quartile',
+      ecc: 'medium',
       encoding: 'byte',
-      border: 3,
+      border: 4,
     });
   }, [value]);
 
@@ -32,7 +32,7 @@ export default function QrMatrix({ value, className = '' }) {
       viewBox={`0 0 ${size} ${size}`}
       role="img"
       aria-label="Closet Prayer sharing QR code"
-      className={`block w-[78vw] max-w-[430px] aspect-square bg-white ${className}`.trim()}
+      className={`block w-[88vw] max-w-[480px] aspect-square bg-white ${className}`.trim()}
       shapeRendering="crispEdges"
     >
       <rect width={size} height={size} fill="white" />

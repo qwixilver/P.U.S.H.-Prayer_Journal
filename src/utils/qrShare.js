@@ -11,7 +11,9 @@ const DATABASE_TRANSFER_ID_KEY = 'cp:databaseTransferId:v1';
 const QR_FRAME_TYPE = 'cpqr';
 const QR_FRAME_VERSION = 1;
 const QR_SHARE_VERSION = 1;
-const QR_CHUNK_SIZE = 700;
+// Keep each frame near QR version 16 at medium error correction. Denser frames
+// are difficult to resolve when one phone scans another phone's display.
+const QR_CHUNK_SIZE = 300;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

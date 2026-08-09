@@ -22,6 +22,16 @@ function cameraErrorMessage(error) {
   return error?.message || 'The camera could not be started.';
 }
 
+function createNativeQrDetector() {
+  if (typeof globalThis.BarcodeDetector !== 'function') return null;
+
+  try {
+    return new globalThis.BarcodeDetector({ formats: ['qr_code'] });
+  } catch {
+    return null;
+  }
+}
+
 export default function PrayerQrScannerModal({ onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -31,6 +41,9 @@ export default function PrayerQrScannerModal({ onClose }) {
   const processingRef = useRef(false);
   const lastScanAtRef = useRef(0);
   const lastRawRef = useRef('');
+  const barcodeDetectorRef = useRef(null);
+  const scanInFlightRef = useRef(false);
+  const scanGenerationRef = useRef(0);
 
   const [cameraState, setCameraState] = useState('idle');
   const [status, setStatus] = useState('Point the camera at a Closet Prayer sharing QR code.');
@@ -39,6 +52,10 @@ export default function PrayerQrScannerModal({ onClose }) {
   const [importResult, setImportResult] = useState(null);
 
   function stopCamera() {
+    scanGenerationRef.current += 1;
+    scanInFlightRef.current = false;
+    barcodeDetectorRef.current = null;
+
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
@@ -118,12 +135,40 @@ export default function PrayerQrScannerModal({ onClose }) {
     setStatus(`Scanning transfer… ${collected.received} of ${collected.total} frames received.`);
   }
 
+  async function decodeCanvasFrame(canvas, context, width, height) {
+    const nativeDetector = barcodeDetectorRef.current;
+
+    if (nativeDetector) {
+      try {
+        const barcodes = await nativeDetector.detect(canvas);
+        const detectedQr = barcodes.find(
+          (barcode) => barcode.format === 'qr_code' && barcode.rawValue
+        );
+        if (detectedQr) return detectedQr.rawValue;
+      } catch {
+        // Some browsers expose BarcodeDetector without QR support.
+        barcodeDetectorRef.current = null;
+      }
+    }
+
+    const imageData = context.getImageData(0, 0, width, height);
+    return decodeQR(
+      {
+        width,
+        height,
+        data: imageData.data,
+      },
+      { cropToSquare: true }
+    );
+  }
+
   function scanLoop(timestamp) {
     animationRef.current = requestAnimationFrame(scanLoop);
 
     if (
       processingRef.current ||
-      timestamp - lastScanAtRef.current < 140
+      scanInFlightRef.current ||
+      timestamp - lastScanAtRef.current < 160
     ) {
       return;
     }
@@ -134,7 +179,7 @@ export default function PrayerQrScannerModal({ onClose }) {
 
     lastScanAtRef.current = timestamp;
 
-    const maxWidth = 720;
+    const maxWidth = 960;
     const scale = Math.min(1, maxWidth / video.videoWidth);
     const width = Math.max(1, Math.round(video.videoWidth * scale));
     const height = Math.max(1, Math.round(video.videoHeight * scale));
@@ -144,29 +189,34 @@ export default function PrayerQrScannerModal({ onClose }) {
 
     const context = canvas.getContext('2d', { willReadFrequently: true });
     context.drawImage(video, 0, 0, width, height);
-    const imageData = context.getImageData(0, 0, width, height);
+    const scanGeneration = scanGenerationRef.current;
+    scanInFlightRef.current = true;
 
-    try {
-      const rawText = decodeQR(
-        {
-          width,
-          height,
-          data: imageData.data,
-        },
-        { cropToSquare: true }
-      );
+    void (async () => {
+      try {
+        const rawText = await decodeCanvasFrame(canvas, context, width, height);
+        if (
+          scanGeneration !== scanGenerationRef.current ||
+          !rawText ||
+          rawText === lastRawRef.current
+        ) {
+          return;
+        }
 
-      if (!rawText || rawText === lastRawRef.current) return;
-      lastRawRef.current = rawText;
+        lastRawRef.current = rawText;
+        window.setTimeout(() => {
+          if (lastRawRef.current === rawText) lastRawRef.current = '';
+        }, 450);
 
-      window.setTimeout(() => {
-        if (lastRawRef.current === rawText) lastRawRef.current = '';
-      }, 450);
-
-      acceptDecodedText(rawText);
-    } catch {
-      // A frame without a readable QR code is expected; keep scanning.
-    }
+        await acceptDecodedText(rawText);
+      } catch {
+        // A frame without a readable QR code is expected; keep scanning.
+      } finally {
+        if (scanGeneration === scanGenerationRef.current) {
+          scanInFlightRef.current = false;
+        }
+      }
+    })();
   }
 
   async function startCamera() {
@@ -212,6 +262,7 @@ export default function PrayerQrScannerModal({ onClose }) {
       video.playsInline = true;
       await video.play();
 
+      barcodeDetectorRef.current = createNativeQrDetector();
       setCameraState('scanning');
       setStatus('Point the camera at the sharing QR code.');
       animationRef.current = requestAnimationFrame(scanLoop);
