@@ -224,8 +224,8 @@ function CategoryList() {
                 key={category.id}
                 className="bg-gray-800 rounded-lg shadow-md"
               >
-                <div className="w-full p-4 flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
+                <div className="flex w-full flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="w-full min-w-0 flex-1">
                     <h3 className="font-semibold text-lg text-white">
                       {category.name}
                     </h3>
@@ -234,7 +234,7 @@ function CategoryList() {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                     <button
                       type="button"
                       onClick={() => toggleCategory(category.id)}
@@ -310,8 +310,8 @@ function CategoryList() {
                                   }
                                 />
                               ) : (
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="w-full min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <p className="text-white font-medium">
                                         {requestor.name}
@@ -326,7 +326,7 @@ function CategoryList() {
                                       {requestor.description}
                                     </p>
                                   </div>
-                                  <div className="flex flex-wrap items-center justify-end gap-2 self-start">
+                                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                                     <DataExportButton
                                       kind="requestor"
                                       id={requestor.id}

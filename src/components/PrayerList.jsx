@@ -331,8 +331,8 @@ export default function PrayerList({
 
     return (
       <li key={prayer.id} className="bg-gray-800 rounded-lg p-3 shadow">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="w-full min-w-0 flex-1">
             <Heading className="text-white font-semibold">
               {prayer.name}
             </Heading>
@@ -345,7 +345,7 @@ export default function PrayerList({
             </div>
           </div>
 
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
             <button
               type="button"
               onClick={() => togglePrayerDetails(prayer.id)}

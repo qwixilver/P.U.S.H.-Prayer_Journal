@@ -133,15 +133,15 @@ export default function SingleView({ initialPrayerId = null }) {
           flex flex-col overflow-hidden
         "
       >
-        <div className="flex items-start justify-between">
-          <div className="pr-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="w-full min-w-0 sm:pr-2">
             <h3 className="text-xl font-semibold text-white">{current.name}</h3>
             <div className="text-gray-300 text-sm">
               Requested: {fmt(current.requestedAt)} • Status: Requested
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
             <DataExportButton
               kind="prayer"
               id={current.id}

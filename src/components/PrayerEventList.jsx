@@ -85,8 +85,8 @@ export default function PrayerEventList({
 
       {events.map((event) => (
         <div key={event.id} className="bg-gray-700 rounded p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="w-full min-w-0 flex-1">
               <div className="text-gray-300 text-sm">
                 {fmt(event.createdAt)}
               </div>
@@ -100,7 +100,7 @@ export default function PrayerEventList({
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 self-start">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
               <DataExportButton
                 kind="event"
                 id={event.id}
