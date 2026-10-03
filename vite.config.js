@@ -6,6 +6,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { groupGuidePlugin } from './build/groupGuide.js';
 
 const base = '/';
 
@@ -14,13 +15,15 @@ export default defineConfig(() => {
     base,
     plugins: [
       react(),
+      groupGuidePlugin(),
       VitePWA({
         registerType: 'autoUpdate',
         scope: base,
         base,
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg}', 'guides/**/*'],
           navigateFallback: `${base}index.html`,
+          navigateFallbackDenylist: [/^\/guides(?:\/|$)/],
         },
         manifest: {
           name: 'Prayer Journal',

@@ -34,7 +34,7 @@ export default function GroupSetup() {
       <summary className="cursor-pointer font-semibold">Set up a church-owned group (pilot)</summary>
       <div className="mt-4 space-y-3 text-sm text-gray-300">
         <p>Use a private Google Sheet in your church's account. The administrator installs the supplied script and approves submissions there.</p>
-        <a className="text-yellow-300 underline" href="https://github.com/qwixilver/P.U.S.H.-Prayer_Journal/blob/main/docs/groups.md" target="_blank" rel="noreferrer">Google Sheets setup instructions</a>
+        <a className="text-yellow-300 underline" href="/guides/groups/" target="_blank" rel="noreferrer">Google Sheets setup instructions</a>
         <p>The setup code contains private access keys. Keep this screen open until setup is finished, and keep a private copy of the code for recovery. Only the member invitation is for members; only the submission link belongs on a public website.</p>
         {!config ? <>
           <label className="block">Church or group name

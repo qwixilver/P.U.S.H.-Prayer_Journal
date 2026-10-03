@@ -39,6 +39,11 @@ See `package.json` and the Canvas for `src/`, `public/`, and config files.
 
 ## Testing
 
+The public [Google Sheets setup guide](https://closetprayer.com/guides/groups/)
+is generated from `docs/groups.md` during development and production builds.
+Its setup downloads come from the maintained `group-service/google-apps-script/`
+templates, so the website and repository instructions stay in sync.
+
 - Run `npm test` with Node 22+ for group protocol, local storage, and service tests.
 - See [Church-owned prayer groups](docs/groups.md) for the direct invitation pilot,
   Google Sheets setup, privacy behavior, and required live deployment checks.
