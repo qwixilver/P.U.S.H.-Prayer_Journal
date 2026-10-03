@@ -39,6 +39,10 @@ See `package.json` and the Canvas for `src/`, `public/`, and config files.
 
 ## Testing
 
+- Run `npm test` with Node 22+ for group protocol, local storage, and service tests.
+- See [Church-owned prayer groups](docs/groups.md) for the direct invitation pilot,
+  Google Sheets setup, privacy behavior, and required live deployment checks.
+
 - Open the dev server in your browser to verify the bottom nav and placeholder screens.
 - Use browser DevTools (Application tab) to inspect IndexedDB and Service Worker.
 

@@ -11,6 +11,7 @@ import PrayerEventForm from './PrayerEventForm';
 import DataExportButton from './DataExportButton';
 import PrayerQrShareModal from './PrayerQrShareModal';
 import PrayerQrScannerModal from './PrayerQrScannerModal';
+import GroupPrayerList from './GroupPrayerList';
 
 const DAILY_FILTER_STORAGE_KEY = 'cp:dailyStatusFilters:v1';
 
@@ -475,11 +476,13 @@ export default function PrayerList({
 
       {loading && <p className="text-gray-400">Loading…</p>}
 
+      <GroupPrayerList isSecurity={isSecurity} filters={dailyStatusFilters} />
+
       {!loading && visiblePrayers.length === 0 && (
         <p className="text-gray-400">
           {isSecurity
-            ? 'No prayers found.'
-            : 'No prayers match the selected status filters.'}
+            ? 'No personal prayers selected for Security.'
+            : 'No personal prayers match the selected status filters.'}
         </p>
       )}
 

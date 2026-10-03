@@ -499,6 +499,10 @@ export async function buildPrayerSharePayload(prayerId, scope = 'prayer') {
 
 export async function createPrayerShareFrames(prayerId, scope = 'prayer') {
   const payload = await buildPrayerSharePayload(prayerId, scope);
+  return createPayloadShareFrames(payload);
+}
+
+export async function createPayloadShareFrames(payload) {
   const clearBytes = textEncoder.encode(JSON.stringify(payload));
   const compressed = await compressBytes(clearBytes);
   const encoded = bytesToBase64Url(compressed.bytes);

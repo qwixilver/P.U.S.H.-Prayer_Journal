@@ -28,6 +28,12 @@ db.version(3).stores({
   journalEntries: '++id, title, createdAt, updatedAt',
 });
 
+// Group caches and credentials stay separate from personal backup tables.
+db.version(4).stores({
+  groups: '&id, groupId, nextSyncAt',
+  groupPrayers: '&[groupKey+id], groupKey',
+});
+
 /**
  * Broadcast so views can refresh without a full reload.
  * Many components listen for this: window.addEventListener('db:changed', ...)

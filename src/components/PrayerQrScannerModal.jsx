@@ -3,6 +3,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import decodeQR from 'qr/decode.js';
+import { groupInvitationLink, parseGroupInvitation } from '../utils/groupProtocol';
 import {
   collectQrShareFrame,
   decodeQrShareAssembly,
@@ -32,7 +33,7 @@ function createNativeQrDetector() {
   }
 }
 
-export default function PrayerQrScannerModal({ onClose }) {
+export default function PrayerQrScannerModal({ onClose, onGroupInvitation, groupOnly = false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -114,6 +115,17 @@ export default function PrayerQrScannerModal({ onClose }) {
 
   async function acceptDecodedText(rawText) {
     if (processingRef.current) return;
+
+    if (groupOnly || rawText.startsWith('CPG1.') || rawText.includes('#group=')) {
+      try {
+        const invitation = parseGroupInvitation(rawText, groupOnly ? 'member' : undefined);
+        if (onGroupInvitation) onGroupInvitation(rawText);
+        else window.location.hash = new URL(groupInvitationLink(invitation)).hash;
+        stopCamera();
+        onClose?.();
+      } catch (err) { setError(err.message); }
+      return;
+    }
 
     let collected;
     try {
@@ -286,7 +298,7 @@ export default function PrayerQrScannerModal({ onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center p-3"
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-3"
       role="dialog"
       aria-modal="true"
       aria-label="Scan Closet Prayer QR share"
@@ -301,8 +313,8 @@ export default function PrayerQrScannerModal({ onClose }) {
       <div className="relative z-10 flex max-h-[94vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-700 px-4 py-3">
           <div>
-            <h2 className="text-lg font-semibold text-white">Scan Prayer QR</h2>
-            <p className="text-xs text-gray-400">Automatic Merge Import</p>
+            <h2 className="text-lg font-semibold text-white">{groupOnly ? 'Scan Group Invitation' : 'Scan Prayer QR'}</h2>
+            <p className="text-xs text-gray-400">{groupOnly ? 'Joining requires confirmation after scanning' : 'Prayer import or group invitation'}</p>
           </div>
           <button
             type="button"

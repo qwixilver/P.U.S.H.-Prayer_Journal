@@ -12,6 +12,10 @@ import ErrorBoundary from './components/ErrorBoundary';
 import EmergencyRestore from './components/EmergencyRestore';
 import Settings from './components/Settings';
 import TutorialModal from './components/TutorialModal';
+import GroupsPage from './components/GroupsPage';
+import GroupSubmissionPage from './components/GroupSubmissionPage';
+import { parseGroupInvitation } from './utils/groupProtocol';
+import { startGroupSync } from './utils/groups';
 
 const TAB_STORAGE_KEY = 'cp:activeTab';
 const ONBOARDED_KEY = 'cp:onboarded';
@@ -24,6 +28,7 @@ const VALID_TABS = new Set([
   'security',
   'settings',
   'restore',
+  'groups',
 ]);
 
 const LAUNCH_ACTIONS = {
@@ -37,6 +42,13 @@ function readLocationIntent() {
   const action = url.searchParams.get('action');
   const actionRoute = action ? LAUNCH_ACTIONS[action] : null;
   const hash = url.hash.replace(/^#/, '').trim().toLowerCase();
+
+  const invitation = new URLSearchParams(url.hash.slice(1)).get('group');
+  if (invitation) {
+    let scope = 'member';
+    try { scope = parseGroupInvitation(invitation).scope; } catch { /* The Groups page explains invalid links. */ }
+    return { tab: scope === 'submit' ? 'group-submit' : 'groups', invitation, action: null };
+  }
 
   if (actionRoute) {
     return {
@@ -71,6 +83,7 @@ function removeLaunchActionFromUrl() {
 export default function App() {
   const initialIntent = useMemo(readLocationIntent, []);
   const [activeTab, setActiveTab] = useState(initialIntent.tab);
+  const [groupInvitation, setGroupInvitation] = useState(initialIntent.invitation || '');
   const [focusedPrayerId, setFocusedPrayerId] = useState(null);
   const [pendingLaunchAction, setPendingLaunchAction] = useState(initialIntent.action);
   const [showRestore, setShowRestore] = useState(
@@ -99,12 +112,24 @@ export default function App() {
   }, [handleTabChange]);
 
   useEffect(() => {
-    if (!localStorage.getItem(ONBOARDED_KEY)) setShowTutorial(true);
+    if (!initialIntent.invitation && !localStorage.getItem(ONBOARDED_KEY)) setShowTutorial(true);
 
     const openTutorial = () => setShowTutorial(true);
     window.addEventListener('ui:showTutorial', openTutorial);
     return () => window.removeEventListener('ui:showTutorial', openTutorial);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'group-submit') return undefined;
+    return startGroupSync();
+  }, [activeTab === 'group-submit']);
+
+  useEffect(() => {
+    if (!groupInvitation || activeTab !== 'groups') return;
+    const url = new URL(window.location.href);
+    url.hash = 'groups';
+    history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [groupInvitation, activeTab]);
 
   useEffect(() => {
     const onNav = (event) => {
@@ -133,6 +158,8 @@ export default function App() {
 
       const intent = readLocationIntent();
       setActiveTab(intent.tab);
+      setGroupInvitation(intent.invitation || '');
+      if (intent.invitation) setShowTutorial(false);
       localStorage.setItem(TAB_STORAGE_KEY, intent.tab);
       if (intent.action) setPendingLaunchAction(intent.action);
     };
@@ -170,6 +197,8 @@ export default function App() {
     <>
       <main className="min-h-screen bg-gray-900 text-white pb-24">
         <ErrorBoundary>
+          {activeTab === 'groups' && <GroupsPage invitation={groupInvitation} onInvitationConsumed={() => setGroupInvitation('')} onBack={() => handleTabChange('settings')} />}
+          {activeTab === 'group-submit' && <GroupSubmissionPage key={groupInvitation} invitation={groupInvitation} />}
           {activeTab === 'daily' && (
             <PrayerList
               viewType="daily"
@@ -191,7 +220,7 @@ export default function App() {
         </ErrorBoundary>
       </main>
 
-      <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+      {activeTab !== 'group-submit' && <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />}
 
       {showTutorial && (
         <TutorialModal
