@@ -3,7 +3,7 @@ import { db } from '../db';
 import { groups } from '../utils/groups';
 import { parseGroupInvitation } from '../utils/groupProtocol';
 import PrayerQrScannerModal from './PrayerQrScannerModal';
-import GroupSetup from './GroupSetup';
+import GroupSubmissionPage from './GroupSubmissionPage';
 
 export default function GroupsPage({ invitation = '', onBack, onInvitationConsumed }) {
   const [input, setInput] = useState(invitation);
@@ -13,6 +13,7 @@ export default function GroupsPage({ invitation = '', onBack, onInvitationConsum
   const [error, setError] = useState('');
   const [scan, setScan] = useState(false);
   const [consent, setConsent] = useState(false);
+  const [submissionGroup, setSubmissionGroup] = useState('');
 
   useEffect(() => {
     if (invitation) { setInput(invitation); setConsent(false); onInvitationConsumed?.(); }
@@ -38,6 +39,8 @@ export default function GroupsPage({ invitation = '', onBack, onInvitationConsum
     parseGroupInvitation(raw, 'member');
     setInput(raw); setConsent(false); setScan(false);
   }
+
+  if (submissionGroup) return <GroupSubmissionPage key={submissionGroup} groupKey={submissionGroup} onBack={() => setSubmissionGroup('')} />;
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 p-4 pb-24">
@@ -78,6 +81,7 @@ export default function GroupsPage({ invitation = '', onBack, onInvitationConsum
           {group.error && <p className="text-sm text-amber-200">{group.error}</p>}
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={Boolean(busy)} onClick={() => run(group.id, () => groups.sync(group.id))} className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-50">{busy === group.id ? 'Synchronizing...' : 'Sync now'}</button>
+            <button type="button" disabled={Boolean(busy) || group.accessDenied} onClick={() => setSubmissionGroup(group.id)} className="rounded bg-emerald-700 px-3 py-2 text-sm disabled:opacity-50">Submit a prayer</button>
             <button type="button" disabled={Boolean(busy)} onClick={() => {
               if (window.confirm(`Leave ${group.name} and remove its downloaded prayers from this device?`)) run('leave', () => groups.leave(group.id));
             }} className="rounded bg-gray-600 px-3 py-2 text-sm disabled:opacity-50">Leave group</button>
@@ -85,7 +89,7 @@ export default function GroupsPage({ invitation = '', onBack, onInvitationConsum
         </article>)}
         <p className="text-xs text-gray-400">Groups check for updates when the app is open and an update is due (once every 24 hours). Offline devices retry later. Personal backups exclude group data and access keys; rejoin after restoring.</p>
       </section>
-      <GroupSetup />
+      <p className="text-sm text-gray-400">Setting up or administering a church group? Use the <a href="https://console.closetprayer.com/" target="_blank" rel="noopener noreferrer" className="text-yellow-300 underline">administrator console</a>. This app is for joining groups and submitting prayers.</p>
       {scan && <PrayerQrScannerModal groupOnly onGroupInvitation={acceptScan} onClose={() => setScan(false)} />}
     </div>
   );

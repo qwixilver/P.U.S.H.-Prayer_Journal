@@ -113,7 +113,7 @@ export function validateGroupResponse(value, invitation, previousRevision = '') 
   if (typeof value.revision !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(value.revision)) throw new Error('The group revision is invalid.');
   if (value.unchanged === true) {
     if (!previousRevision || value.revision !== previousRevision) throw new Error('The group must send a complete update.');
-    return { group, revision: value.revision, unchanged: true };
+    return { group, revision: value.revision, unchanged: true, memberSubmissions: value.capabilities?.memberSubmissions === true };
   }
   if (value.complete !== true || !Array.isArray(value.prayers) || value.prayers.length > 1000) {
     throw new Error('The group update is incomplete or too large. Local requests have been kept.');
@@ -134,7 +134,7 @@ export function validateGroupResponse(value, invitation, previousRevision = '') 
       status: row.status, visibility: row.visibility,
     };
   });
-  return { group, revision: value.revision, unchanged: false, prayers };
+  return { group, revision: value.revision, unchanged: false, prayers, memberSubmissions: value.capabilities?.memberSubmissions === true };
 }
 
 export async function callGroupService(invitation, action, extra = {}, fetchImpl = globalThis.fetch) {

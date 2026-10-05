@@ -1,10 +1,11 @@
-import { callGroupService, groupLocalId, newGroupId, parseGroupInvitation, validateGroupResponse } from './groupProtocol.js';
+import { callGroupService, groupLocalId, newGroupId, parseGroupInvitation, validateGroupEnvelope, validateGroupResponse } from './groupProtocol.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const RETRY = 15 * 60 * 1000;
 
 export function createGroupStore(database, notify = () => {}, request = callGroupService) {
   const pending = new Map();
+  let refreshingAll;
 
   async function writeSnapshot(group, snapshot) {
     if (snapshot.unchanged) return;
@@ -22,7 +23,7 @@ export function createGroupStore(database, notify = () => {}, request = callGrou
     const now = Date.now();
     const group = { ...invitation, id: groupLocalId(invitation), name: snapshot.group.name,
       revision: snapshot.revision, lastSyncAt: now, nextSyncAt: now + DAY,
-      generation: newGroupId(), error: '', accessDenied: false };
+      generation: newGroupId(), error: '', accessDenied: false, memberSubmissions: snapshot.memberSubmissions };
     await database.transaction('rw', database.groups, database.groupPrayers, async () => {
       await writeSnapshot(group, snapshot);
       await database.groups.put(group);
@@ -33,22 +34,24 @@ export function createGroupStore(database, notify = () => {}, request = callGrou
 
   async function performSync(id) {
     const group = await database.groups.get(id);
-    if (!group) return;
+    if (!group) return false;
     try {
       const snapshot = validateGroupResponse(
         await request(group, 'sync', { revision: group.revision }), group, group.revision
       );
-      await database.transaction('rw', database.groups, database.groupPrayers, async () => {
+      const applied = await database.transaction('rw', database.groups, database.groupPrayers, async () => {
         const current = await database.groups.get(id);
         // An old response cannot undo Leave, rejoining, or a newer sync from another tab.
-        if (!current || current.generation !== group.generation) return;
+        if (!current || current.generation !== group.generation) return false;
         await writeSnapshot(group, snapshot);
         const now = Date.now();
         await database.groups.update(id, { name: snapshot.group.name, revision: snapshot.revision,
           lastSyncAt: now, nextSyncAt: now + DAY, generation: newGroupId(),
-          error: '', accessDenied: false });
+          error: '', accessDenied: false, memberSubmissions: snapshot.memberSubmissions });
+        return true;
       });
       notify();
+      return applied;
     } catch (error) {
       await database.transaction('rw', database.groups, database.groupPrayers, async () => {
         const current = await database.groups.get(id);
@@ -67,6 +70,48 @@ export function createGroupStore(database, notify = () => {}, request = callGrou
   function sync(id) {
     if (!pending.has(id)) pending.set(id, performSync(id).finally(() => pending.delete(id)));
     return pending.get(id);
+  }
+
+  function syncAll() {
+    if (!refreshingAll) refreshingAll = (async () => {
+      const memberships = await database.groups.toArray();
+      const result = { total: memberships.length, refreshed: 0, failed: 0, skipped: 0 };
+      // Sequential requests avoid a burst against church-owned account quotas.
+      for (const group of memberships) {
+        try { if (await sync(group.id)) result.refreshed++; else result.skipped++; }
+        catch { result.failed++; }
+      }
+      return result;
+    })().finally(() => { refreshingAll = null; });
+    return refreshingAll;
+  }
+
+  async function submissionGroup(id) {
+    let group = await database.groups.get(id);
+    if (!group || group.accessDenied) throw new Error('This group membership is unavailable. Join again with a current invitation.');
+    if (!group.memberSubmissions) {
+      await sync(id);
+      group = await database.groups.get(id);
+    }
+    if (!group || group.accessDenied) throw new Error('This group membership is unavailable.');
+    if (!group.memberSubmissions) throw new Error('This group needs a service update before members can submit here. Ask its administrator to update the church script, or use the church website submission form.');
+    return group;
+  }
+
+  async function submissionInfo(id) {
+    const group = await submissionGroup(id);
+    return validateGroupEnvelope(await request(group, 'member-submit-info'), group);
+  }
+
+  async function submit(id, submission, requestId) {
+    const group = await submissionGroup(id);
+    const result = await request(group, 'member-submit', { requestId, submission: {
+      name: submission.name, description: submission.description, requestor: submission.requestor,
+      contact: submission.contact, website: submission.website, visibility: submission.visibility, consent: submission.consent,
+    } });
+    validateGroupEnvelope(result, group);
+    if (result.accepted !== true) throw new Error('Your request was not accepted. Please try again later.');
+    return result;
   }
 
   async function syncDue() {
@@ -104,5 +149,5 @@ export function createGroupStore(database, notify = () => {}, request = callGrou
     return { group, prayer };
   }
 
-  return { join, sync, syncDue, leave, setSecurity, shareablePrayer };
+  return { join, sync, syncAll, syncDue, leave, submissionInfo, submit, setSecurity, shareablePrayer };
 }

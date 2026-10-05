@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { callGroupService, newGroupId, parseGroupInvitation, validateGroupEnvelope } from '../utils/groupProtocol';
+import { groups } from '../utils/groups';
 
-export default function GroupSubmissionPage({ invitation }) {
+export default function GroupSubmissionPage({ invitation, groupKey, onBack }) {
   const [groupName, setGroupName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -14,21 +15,21 @@ export default function GroupSubmissionPage({ invitation }) {
     let active = true;
     const load = async () => {
       try {
-        const invite = parseGroupInvitation(invitation, 'submit');
-        const group = validateGroupEnvelope(await callGroupService(invite, 'submit-info'), invite);
+        const invite = groupKey ? null : parseGroupInvitation(invitation, 'submit');
+        const group = groupKey ? await groups.submissionInfo(groupKey)
+          : validateGroupEnvelope(await callGroupService(invite, 'submit-info'), invite);
         if (active) setGroupName(group.name);
       } catch (err) { if (active) setError(err.message); }
     };
     load();
     return () => { active = false; };
-  }, [invitation]);
+  }, [invitation, groupKey]);
 
   async function submit(event) {
     event.preventDefault();
     if (!consent || !groupName || busy) return;
     setBusy(true); setError('');
     try {
-      const invite = parseGroupInvitation(invitation, 'submit');
       const submission = {
         ...fields, visibility: shareable ? 'shareable' : 'group-only', consent: true,
       };
@@ -36,8 +37,13 @@ export default function GroupSubmissionPage({ invitation }) {
       if (pendingRequest.current?.fingerprint !== fingerprint) {
         pendingRequest.current = { fingerprint, id: newGroupId() };
       }
-      const result = await callGroupService(invite, 'submit', { requestId: pendingRequest.current.id, submission });
-      validateGroupEnvelope(result, invite);
+      let result;
+      if (groupKey) result = await groups.submit(groupKey, submission, pendingRequest.current.id);
+      else {
+        const invite = parseGroupInvitation(invitation, 'submit');
+        result = await callGroupService(invite, 'submit', { requestId: pendingRequest.current.id, submission });
+        validateGroupEnvelope(result, invite);
+      }
       if (result.accepted !== true) throw new Error('Your request was not accepted. Please try again later.');
       setSent(true); setFields({ name: '', description: '', requestor: '', contact: '', website: '' });
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -46,6 +52,7 @@ export default function GroupSubmissionPage({ invitation }) {
   return (
     <div className="mx-auto max-w-xl p-5 text-white">
       <h1 className="text-2xl font-bold">Submit a prayer request</h1>
+      {onBack && <button type="button" onClick={onBack} className="mt-3 rounded bg-gray-700 px-3 py-2">Back to groups</button>}
       <p className="mt-2 text-yellow-300">{groupName || 'Connecting to the group...'}</p>
       {error && <p role="alert" className="mt-3 text-red-300">{error}</p>}
       {sent ? <p role="status" className="mt-5 rounded bg-gray-800 p-4">Your request has been sent to the group administrator for review.</p> : <form onSubmit={submit} className="mt-5 space-y-4">

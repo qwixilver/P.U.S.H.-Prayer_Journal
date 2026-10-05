@@ -38,6 +38,59 @@ test('private invitations round-trip through links and QR-sized codes', () => {
   assert.match(newGroupId(), /^[a-f0-9-]{36}$/);
 });
 
+test('refresh all forces fresh checks, shares pending work, and preserves offline groups', async () => {
+  let offline = false, calls = 0, active = 0, maxActive = 0;
+  const store = createGroupStore(db, () => {}, async group => {
+    calls++; active++; maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 2)); active--;
+    if (offline && group.endpoint === invite.endpoint) throw new Error('Offline');
+    return snapshot();
+  });
+  await store.join(link);
+  await store.join(groupInvitationLink({ ...invite, endpoint: invite.endpoint.replace('A'.repeat(60), 'B'.repeat(60)) }));
+  calls = 0; offline = true;
+  const first = store.syncAll(), second = store.syncAll();
+  assert.equal(first, second);
+  assert.deepEqual(await first, { total: 2, refreshed: 1, failed: 1, skipped: 0 });
+  assert.equal(calls, 2); assert.equal(maxActive, 1);
+  assert.equal(await db.groupPrayers.count(), 2);
+  await db.groups.clear();
+  assert.deepEqual(await store.syncAll(), { total: 0, refreshed: 0, failed: 0, skipped: 0 });
+});
+
+test('member submission discovers upgrades, sends only form fields, and requires current membership', async () => {
+  const calls = [];
+  let upgraded = false;
+  const store = createGroupStore(db, () => {}, async (group, action, extra) => {
+    calls.push({ group, action, extra });
+    const result = { ...snapshot(), capabilities: { memberSubmissions: upgraded } };
+    if (action === 'member-submit') result.accepted = true;
+    return result;
+  });
+  const group = await store.join(link);
+  await assert.rejects(store.submissionInfo(group.id), /service update/);
+  assert.equal(calls.some(call => call.action === 'member-submit-info'), false);
+  upgraded = true;
+  assert.equal((await store.submissionInfo(group.id)).name, 'Test Church');
+  assert.equal((await db.groups.get(group.id)).memberSubmissions, true);
+  const requestId = newGroupId();
+  await store.submit(group.id, { name: 'Submitted', description: 'For review', requestor: '', contact: '', website: '', visibility: 'group-only', consent: true, journal: 'PRIVATE' }, requestId);
+  const sent = calls.at(-1);
+  assert.equal(sent.action, 'member-submit'); assert.equal(sent.group.token, invite.token);
+  assert.equal(sent.extra.requestId, requestId); assert.equal(sent.extra.submission.journal, undefined);
+  assert.equal(await db.groupPrayers.count(), 1, 'Sending does not auto-publish a local group prayer');
+  await db.groups.update(group.id, { accessDenied: true });
+  await assert.rejects(store.submit(group.id, {}, requestId), /membership/);
+  await store.leave(group.id);
+  await assert.rejects(store.submissionInfo(group.id), /membership/);
+});
+
+test('an unchanged snapshot still advertises new member submission capability', () => {
+  const response = { ...snapshot(), unchanged: true, capabilities: { memberSubmissions: true } };
+  assert.equal(validateGroupResponse(response, invite, 'revision_1').memberSubmissions, true);
+  assert.equal(validateGroupResponse(snapshot(), invite).memberSubmissions, false);
+});
+
 test('submission invitations cannot join and unsafe endpoints are rejected', () => {
   const submit = groupInvitationLink({ ...invite, scope: 'submit', token: 'S'.repeat(43) });
   assert.throws(() => parseGroupInvitation(submit, 'member'), /submission/);

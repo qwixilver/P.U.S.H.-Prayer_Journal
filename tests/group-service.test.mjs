@@ -41,7 +41,8 @@ function fixture(managed = false) {
   }; }
   const context = vm.createContext({ console, Set, Date, Number, JSON,
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties.get(key) || null,
-      setProperty: (key, value) => properties.set(key, value) }) },
+      setProperty: (key, value) => properties.set(key, value),
+      setProperties: values => Object.entries(values).forEach(([key, value]) => properties.set(key, value)) }) },
     SpreadsheetApp: {
       openById: () => ({ getId: () => 'sheet', getSheetByName: sheet, getSpreadsheetTimeZone: () => 'America/New_York', insertSheet: name => { data[name] = []; return sheet(name); } }),
       getUi: () => ({ Button: { OK: 'ok' }, ButtonSet: { OK_CANCEL: 'ok-cancel' }, alert: () => {},
@@ -105,6 +106,53 @@ test('member and public submission credentials have separate scopes', () => {
   assert.equal(call('submit-info', submit).group.name, 'Test Church');
   assert.equal(call('delete-all', member).code, 'access-denied');
   assert.equal(call('sync', member, { groupId: randomUUID() }).code, 'access-denied');
+});
+
+test('members can submit for review but cannot perform public or administrative operations', () => {
+  const { call, data } = fixture(true);
+  assert.equal(call('sync').capabilities.memberSubmissions, true);
+  assert.equal(call('member-submit-info').ok, true);
+  assert.equal(call('member-submit-info', submit).code, 'access-denied');
+  assert.equal(call('console-info', member).code, 'access-denied');
+  const requestId = randomUUID();
+  const submission = { name: 'Member prayer', description: 'Please pray', requestor: '', contact: 'private@example.test', website: '', consent: true, visibility: 'group-only' };
+  assert.equal(call('member-submit', member, { requestId, submission }).accepted, true);
+  assert.equal(call('member-submit', member, { requestId, submission }).accepted, true);
+  assert.equal(data.Inbox.length, 2); assert.equal(data.Requests.length, 2);
+  assert.equal(data.Inbox[1][7], 'pending');
+  assert.equal(call('member-submit', submit, { requestId: randomUUID(), submission }).code, 'access-denied');
+  assert.equal(call('member-submit', member, { requestId: randomUUID(), submission: { ...submission, consent: false } }).ok, false);
+});
+
+test('owner-only bootstrap checks the fixed setup record and never resets another group', () => {
+  const f = fixture();
+  f.properties.clear(); f.data.Requests = [requestHeaders];
+  const install = { sheetId: 'sheet', installId: randomUUID(), groupId: gid, name: 'Test Church', memberToken: member, submissionToken: submit };
+  f.context.CP_INSTALL = install;
+  f.data.GroupSetup = [['key', 'value'], ['setup', JSON.stringify({ ...install, protocol: 'cp-setup', version: 1, phase: 'authorizing' })], ['authorized', '']];
+  assert.match(f.context.doGet().text, /approval completed/);
+  assert.equal(f.properties.get('CP_MEMBER_HASH'), hash(member));
+  assert.equal(f.data.GroupSetup[2][1], install.installId);
+  assert.match(f.context.doGet().text, /approval completed/, 'Approval is idempotent');
+  f.properties.set('CP_GROUP_ID', randomUUID());
+  const before = JSON.stringify([...f.properties]);
+  assert.match(f.context.doGet().text, /could not be verified/);
+  assert.equal(JSON.stringify([...f.properties]), before);
+  delete f.context.CP_INSTALL;
+  assert.match(f.context.doGet().text, /Use your invitation/, 'Public version never bootstraps');
+});
+
+test('bootstrap refuses an altered setup nonce, nonempty sheet, or missing advanced service permission', () => {
+  for (const fault of ['nonce', 'records', 'permission']) {
+    const f = fixture(); f.properties.clear();
+    const install = { sheetId: 'sheet', installId: randomUUID(), groupId: gid, name: 'Test Church', memberToken: member, submissionToken: submit };
+    f.context.CP_INSTALL = install;
+    f.data.GroupSetup = [['key', 'value'], ['setup', JSON.stringify({ ...install, protocol: 'cp-setup', version: 1, phase: 'authorizing', ...(fault === 'nonce' ? { installId: randomUUID() } : {}) })], ['authorized', '']];
+    if (fault !== 'records') f.data.Requests = [requestHeaders];
+    if (fault === 'permission') f.context.Sheets.Spreadsheets.get = () => { throw new Error('Denied'); };
+    assert.match(f.context.doGet().text, /could not be verified/);
+    assert.equal(f.properties.size, 0); assert.equal(f.data.GroupSetup[2][1], '');
+  }
 });
 
 test('enabling management requires the existing public link and preserves records and command history', () => {

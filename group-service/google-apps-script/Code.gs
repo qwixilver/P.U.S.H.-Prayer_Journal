@@ -21,7 +21,7 @@ function onOpen() {
 
 function configureGroup() {
   const ui = SpreadsheetApp.getUi();
-  const prompt = ui.prompt('Configure group', 'Paste the private setup code generated in Closet Prayer > Settings > Prayer groups.', ui.ButtonSet.OK_CANCEL);
+  const prompt = ui.prompt('Configure group', 'Paste the private setup code generated in the Closet Prayer administrator console.', ui.ButtonSet.OK_CANCEL);
   if (prompt.getSelectedButton() !== ui.Button.OK) return;
   const config = JSON.parse(prompt.getResponseText());
   if (config.version !== 1 || !CP_UUID_PATTERN.test(config.groupId || '') ||
@@ -97,11 +97,49 @@ function cpGroup_() {
 }
 
 function cpResult_(data) {
-  return Object.assign({ protocol: 'cp-group', version: 1, ok: true, group: cpGroup_() }, data);
+  return Object.assign({ protocol: 'cp-group', version: 1, ok: true, group: cpGroup_(), capabilities: { memberSubmissions: true } }, data);
 }
 
 function doGet() {
+  if (typeof CP_INSTALL !== 'undefined') {
+    try {
+      cpInstall_();
+      return ContentService.createTextOutput('Google approval completed. Return to the Closet Prayer console and choose Finish setup.');
+    } catch (error) {
+      return ContentService.createTextOutput('Setup could not be verified. Return to the Closet Prayer console. No group data was replaced.');
+    }
+  }
   return ContentService.createTextOutput('Closet Prayer group service. Use your invitation in the app.');
+}
+
+// Only generated, owner-only authorization deployments include CP_INSTALL.
+// Configuration is fixed in the private script, never accepted from an HTTP request.
+function cpInstall_() {
+  return cpWithLock_(function () {
+    const install = CP_INSTALL;
+    const spreadsheet = SpreadsheetApp.openById(install.sheetId);
+    const setup = spreadsheet.getSheetByName('GroupSetup');
+    if (!setup) throw new Error('Missing setup receipt.');
+    const record = JSON.parse(setup.getRange(2, 2).getValues()[0][0]);
+    if (record.protocol !== 'cp-setup' || record.version !== 1 || record.installId !== install.installId ||
+        record.groupId !== install.groupId || record.name !== install.name || record.phase !== 'authorizing' ||
+        record.memberToken !== install.memberToken || record.submissionToken !== install.submissionToken ||
+        !CP_UUID_PATTERN.test(install.groupId) || !CP_TOKEN_PATTERN.test(install.memberToken) ||
+        !CP_TOKEN_PATTERN.test(install.submissionToken) || install.memberToken === install.submissionToken) throw new Error('Setup mismatch.');
+    cpText_(install.name, 120, true);
+    const properties = PropertiesService.getScriptProperties();
+    const previous = properties.getProperty('CP_GROUP_ID');
+    if (previous && (previous !== install.groupId || properties.getProperty('CP_INSTALL_ID') !== install.installId)) throw new Error('Already configured.');
+    const requests = cpEnsureSheet_(spreadsheet, 'Requests', CP_REQUEST_HEADERS);
+    const inbox = cpEnsureSheet_(spreadsheet, 'Inbox', CP_INBOX_HEADERS);
+    if (!previous && (requests.getLastRow() > 1 || inbox.getLastRow() > 1)) throw new Error('Not empty.');
+    // Prove that the advanced service is authorized before recording success.
+    Sheets.Spreadsheets.get(install.sheetId, { fields: 'spreadsheetId' });
+    properties.setProperties({ CP_GROUP_ID: install.groupId, CP_GROUP_NAME: install.name,
+      CP_SHEET_ID: install.sheetId, CP_MEMBER_HASH: cpHash_(install.memberToken),
+      CP_SUBMIT_HASH: cpHash_(install.submissionToken), CP_CONSOLE_VERSION: '1', CP_INSTALL_ID: install.installId });
+    setup.getRange(3, 1, 1, 2).setNumberFormat('@').setValues([['authorized', install.installId]]);
+  });
 }
 
 function doPost(event) {
@@ -129,6 +167,12 @@ function cpHandleRequest_(request) {
   if (request.action === 'submit-info' || request.action === 'submit') {
     if (!cpCredentialMatches_(request.token, properties.getProperty('CP_SUBMIT_HASH'))) return deny;
     if (request.action === 'submit-info') return cpResult_({});
+    return cpSubmit_(request);
+  }
+  if (request.action === 'member-submit-info' || request.action === 'member-submit') {
+    if (!cpCredentialMatches_(request.token, properties.getProperty('CP_MEMBER_HASH'))) return deny;
+    if (request.action === 'member-submit-info') return cpResult_({});
+    // Members use their existing invitation. Never return the public submission key.
     return cpSubmit_(request);
   }
   if (request.action === 'console-info' || request.action === 'console-process') {

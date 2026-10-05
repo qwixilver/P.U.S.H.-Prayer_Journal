@@ -5,6 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { emitDbChanged, db } from '../db';
+import PrayerGroupsCard from './PrayerGroupsCard';
 import {
   exportSmartJson,
   downloadJson,
@@ -1144,11 +1145,7 @@ export default function Settings() {
     <div className="relative overflow-y-auto p-4 pb-24">
       <h2 className="text-2xl font-bold mb-4">Settings</h2>
 
-      <section className="bg-gray-800 rounded-lg p-4 shadow space-y-3 mb-6">
-        <h3 className="text-lg font-semibold">Prayer groups</h3>
-        <p className="text-sm text-gray-300">Join a church using its private invitation link or QR code. Group prayers are downloaded for offline use; your personal journal stays on this device.</p>
-        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('ui:nav', { detail: 'groups' }))} className="rounded bg-blue-600 px-3 py-2 text-white hover:bg-blue-700">Manage groups</button>
-      </section>
+      <PrayerGroupsCard />
 
       <section className="bg-gray-800 rounded-lg p-4 shadow space-y-3 mb-6">
         <div className="flex items-center justify-between gap-3">

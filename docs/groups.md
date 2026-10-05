@@ -10,8 +10,9 @@ credentials, and the church's deployment belong in the church's Google account.
 This implementation includes direct invitations, QR scanning, public submissions,
 spreadsheet moderation, daily/on-demand downloads, offline reading, and group-only
 sharing restrictions. The [administrator console](https://console.closetprayer.com/)
-supports Google login, prayer editing, moderation, and public submission embeds
-after the church upgrades its script. The spreadsheet menu remains available.
+supports Google login, guided group creation, prayer editing, moderation, and public
+submission embeds. The new guided creation flow needs a live Google-account pilot
+before general rollout. Existing groups keep working without repeating setup.
 Other providers are future work. Existing hosting and personal records are unchanged.
 
 Automated tests exercise the protocol, IndexedDB migration/transactions, and the
@@ -25,40 +26,40 @@ must be verified with an actual deployment. Mock responses cannot prove those.
 Use a Google account controlled by the church, and keep access available when an
 administrator changes. A free Google account can be used within Google's quotas.
 
-1. Create an empty Google Sheet. Keep its sharing restricted to administrators.
-   Do not publish the spreadsheet or enable public link access to its contents.
-2. Open **Extensions > Apps Script**. Replace the default script with
-   [Code.gs](../group-service/google-apps-script/Code.gs).
-3. In Apps Script's project settings, enable showing the `appsscript.json` manifest.
-   Use [appsscript.json](../group-service/google-apps-script/appsscript.json).
-   The script requests spreadsheet access and spreadsheet UI access. It does not
-   need Drive-wide access, Gmail, or access to members' Google accounts.
-   The manifest also enables the **Sheets** advanced service. Check it appears in
-   the editor under **Services**; if absent use **Services + > Google Sheets API >
-   Add**. Default Apps Script Cloud projects enable the API automatically. A script
-   linked to a standard Cloud project also needs Google Sheets API enabled in that
-   project's API Library. See [Google's instructions](https://developers.google.com/apps-script/guides/services/advanced).
-4. In Closet Prayer, open **Settings > Manage groups > Set up a church-owned group**.
-   Enter the group name and choose **Create setup code**. Keep this screen open.
-   Keep a private copy of the generated setup code for recovery and updates.
-   It contains the member and submission keys; never put it in GitHub or a website.
-5. Reload the spreadsheet to see its **Closet Prayer** menu. Choose **Configure
-   group**, authorize the script after reviewing its permissions, and paste the
-   setup code. This creates `Requests` and `Inbox` tabs without replacing other tabs.
-   Google may show an unverified-app consent screen for a copied script. Workspace
-   administrators may restrict execution or public deployment access.
-6. In Apps Script choose **Deploy > New deployment > Web app**. Select **Execute as:
-   Me** and **Who has access: Anyone**. The script checks scoped credentials itself;
-   the spreadsheet remains private. A deployment requiring visitors to sign into
-   Google is not supported by this prototype. Use the `/exec` URL, not `/dev`.
-7. Paste the deployment URL into the setup screen and choose **Create invitations**.
-   It generates a private member link/QR and a separate public submission link/QR.
-8. Join through the private invitation, verify the group name and downloaded data,
-   then complete the live checks below before distributing invitations.
-9. To manage in the console, choose **Closet Prayer > Enable administrator console**
-   in the spreadsheet and paste its public submission link. Open the console,
-   connect Google, and select this sheet. Share Editor access with any additional
-   administrators; do not share a Google password or make the sheet public.
+1. Open the [administrator console](https://console.closetprayer.com/) and connect
+   your church's Google account. Choose **Create a new group**. If a group already
+   exists, choose its spreadsheet instead; do not create a replacement.
+2. Enter the church/group name. Follow the console's link to Google script settings
+   and enable **Google Apps Script API** once for this account. Return to the console,
+   review the permission/privacy notice, and choose **Prepare my group**.
+3. Approve Google's additional script-management permission using the same account.
+   The console creates a private sheet and a bound script from the bundled service
+   template. No copying code, creating a Cloud project, or typing deployment URLs is
+   required for the normal church-admin flow.
+4. Choose **Open Google approval**. Approve access for this church's service, then
+   return to the console and choose **Finish setup**. This separate approval cannot
+   be skipped by the console. Google may show an unverified-app warning; review the
+   account, permissions, and script before deciding whether to proceed. Organization
+   policy may block public web apps.
+5. After the connection checks pass, create/manage prayers and choose **Verify
+   service and show embed**. The panel provides the public submission link/iframe,
+   plus a separate private member invitation and QR for guided-setup groups.
+6. Test with fictional information using the live checks below. Share the private
+   invitation with members only. Additional administrators need Editor permission
+   on the sheet, not a shared Google password.
+
+The console operator must first enable the Apps Script API and configure its
+additional OAuth scopes once; individual churches do not repeat that Cloud setup.
+See [guided creation requirements and recovery](https://console.closetprayer.com/setup.html#guided-creation).
+Script-management permission is broader than one file. The generated service also
+requests spreadsheet and spreadsheet-menu access under its owner's account. Keep
+the sheet restricted to trusted administrators; group data is not end-to-end encrypted.
+
+An unfinished group can be resumed by selecting the same spreadsheet. Setup IDs,
+access keys, and an approval receipt live in its private `GroupSetup` tab, never a
+central database. Do not edit that tab or post its contents for support. If a
+connection fails during creation, check Drive before starting again to avoid duplicates.
+The console never deletes a partially created sheet or script automatically.
 
 The links default to `https://closetprayer.com/`. During local development, replace
 only that app origin with the local test address, keeping the entire `#group=...`
@@ -116,7 +117,10 @@ version. A code release does not automatically update church deployments.
    and [appsscript.json](../group-service/google-apps-script/appsscript.json).
    Keep all `CP_*` properties. Do not configure a new group or generate replacement
    keys just to enable the console.
-2. Check the **Sheets** advanced service as described in setup step 3 above.
+2. Check the **Sheets** advanced service appears under **Services**. If absent use
+   **Services + > Google Sheets API > Add**. A script linked to a standard Cloud
+   project also needs Google Sheets API enabled in that project's API Library.
+   See [Google's instructions](https://developers.google.com/apps-script/guides/services/advanced).
 3. Save, then **Deploy > Manage deployments > Edit > New version > Deploy** for
    the existing web app. Keep Execute as Me, access Anyone, and the same `/exec` URL.
 4. Reload the spreadsheet. Run **Closet Prayer > Enable administrator console**
@@ -127,7 +131,8 @@ version. A code release does not automatically update church deployments.
    should appear. Verify the service in **Church website submissions** to obtain
    the public link and iframe. The service must identify this selected sheet.
 
-Do not replace working OAuth/API keys or add broader console permission scopes.
+Ordinary administration of existing groups does not need the new setup scopes.
+Do not replace working OAuth/API keys to upgrade a church service.
 If the public submission link was lost, recover it from the church's existing
 form/setup records. Re-run Enable administrator console if that key is rotated.
 Older groups remain readable in the console until this upgrade is complete.
@@ -145,8 +150,8 @@ withdrawn. This is operational history, not a verified-author/tamper-proof audit
 ## Public submission form
 
 The console's **Church website submissions** panel verifies the selected sheet's
-service and supplies an iframe snippet and a public link. The journal's group setup
-screen also supplies an iframe for newly configured groups. It
+service and supplies an iframe snippet and a public link. Group creation is managed
+entirely in the console, not in the prayer journal. The iframe
 targets this app with a submission-scoped code. No member credential is included.
 The form defaults to group-only, requires explicit consent, and stores submissions
 for review. It does not publish automatically or reveal other submissions.
@@ -179,7 +184,9 @@ assess whether a church needs a CAPTCHA or a different provider for public traff
   Withdrawn or deleted server rows therefore disappear at the next successful sync.
 - Sync runs while the app is open/visible when 24 hours have elapsed, and retries
   ordinary failures after 15 minutes. Opening the app or regaining connectivity
-  triggers a due check. Members can use **Sync now**. Closed-app daily background
+  triggers a due check. Members can use **Sync now** per group or **Refresh all groups**
+  directly on the Settings card. Refresh all checks groups sequentially and reports
+  partial failures without discarding other groups' data. Closed-app daily background
   execution is not guaranteed by mobile browsers.
 - Failed, incomplete, or invalid updates preserve the last valid cache. An explicit
   access-denied response clears that group's downloaded prayers and asks the member
@@ -193,6 +200,13 @@ assess whether a church needs a CAPTCHA or a different provider for public traff
 - Any holder of the member invitation can join. This pilot has no individual member
   approval/revocation. Restrict invitations accordingly. Changing the member key
   invalidates all old member invitations and future requests using that key.
+- Members can choose **Submit a prayer** for a joined group. Only the completed form
+  is sent, with explicit consent; personal journal data is never included. Requests
+  enter the same private Inbox as public submissions and wait for administrator review.
+  Existing churches need the updated script deployed for this feature; older groups
+  show an explanation and can keep using their public website form. Sending requires
+  a connection; there is no offline submission queue. A lost response can be retried
+  with the same unedited form without duplicating the accepted request.
 - Share restrictions cannot prevent screenshots, manual copying, browser inspection,
   or a modified client from retaining data it already received.
 
@@ -221,6 +235,9 @@ replace only `memberToken` with a freshly generated 32-byte base64url credential
 and run Configure group again with the same `groupId`. Generate/distribute a matching
 new member invitation. Do not invent a short password or reuse the public submission
 key. A friendlier rotation/recovery interface is future work.
+For guided groups, the private `GroupSetup` record contains the original keys.
+After rotating, update that private record to match before redistributing invitations;
+the console cannot infer a replacement key from its server-side hash.
 
 ## Live deployment acceptance checks
 
@@ -248,6 +265,10 @@ key. A friendlier rotation/recovery interface is future work.
 10. Interrupt a console save, reconnect, and check/retry that same operation.
     Confirm only one resulting prayer and an applied receipt. Revoke Editor access
     and verify later reads/writes fail; an already queued command may still finish.
+11. Submit a fictional prayer from **Manage groups > Submit a prayer**. It must remain
+    pending until approval, with private contact details absent from member sync.
+12. Refresh two joined groups from Settings, including one unavailable service.
+    Confirm the successful group updates and the offline group's last good data remains.
 
 ## Development verification
 

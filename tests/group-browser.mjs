@@ -26,9 +26,9 @@ async function groupResponse(route) {
   assert.equal(route.request().method(), 'POST', 'Group requests must not require a preflight.');
   const body = route.request().postDataJSON();
   traffic.push(body);
-  const payload = { protocol: 'cp-group', version: 1, ok: true, group };
+  const payload = { protocol: 'cp-group', version: 1, ok: true, group, capabilities: { memberSubmissions: true } };
   if (body.action === 'sync') Object.assign(payload, { complete: true, revision: 'browser_revision', prayers: rows });
-  if (body.action === 'submit') Object.assign(payload, { accepted: true });
+  if (['submit', 'member-submit'].includes(body.action)) Object.assign(payload, { accepted: true });
   await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(payload) });
 }
 await context.route('https://script.google.com/**', groupResponse);
@@ -50,6 +50,20 @@ try {
   assert.equal(traffic[0].token, invitation.token);
   assert.ok(!('data' in traffic[0]));
   await widthCheck();
+
+  assert.equal(await page.getByRole('button', { name: 'Create setup code' }).count(), 0);
+  await page.getByRole('button', { name: 'Submit a prayer', exact: true }).click();
+  await page.getByText('Test Church', { exact: true }).waitFor();
+  await page.getByLabel('Prayer title', { exact: true }).fill('Joined member prayer');
+  await page.getByLabel('Prayer request', { exact: true }).fill('Please review this fictional request.');
+  await page.getByRole('checkbox', { name: /I agree/ }).check();
+  await page.getByRole('button', { name: 'Send for review', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'sent to the group administrator' }).waitFor();
+  const memberSubmission = traffic.find(request => request.action === 'member-submit');
+  assert.equal(memberSubmission.token, invitation.token);
+  assert.equal(memberSubmission.submission.visibility, 'group-only');
+  await widthCheck();
+  await page.getByRole('button', { name: 'Back to groups', exact: true }).click();
 
   // A personal prayer makes the backup-isolation assertion meaningful.
   await page.evaluate(async () => {
@@ -88,6 +102,10 @@ try {
   for (const secret of ['Group-only prayer', invitation.token, '"contact"']) assert.ok(!shared.includes(secret));
 
   await page.getByRole('navigation').getByRole('button', { name: 'Settings', exact: true }).click();
+  const beforeRefresh = traffic.filter(request => request.action === 'sync').length;
+  await page.getByRole('button', { name: 'Refresh all groups', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Refreshed' }).waitFor();
+  assert.equal(traffic.filter(request => request.action === 'sync').length, beforeRefresh + 1);
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export JSON', exact: true }).click();
   const stream = await (await downloaded).createReadStream();

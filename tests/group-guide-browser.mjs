@@ -45,22 +45,17 @@ try {
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await page.reload();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
-  await page.getByText('Set up a church-owned group (pilot)', { exact: true }).click();
-  await page.getByLabel('Church or group name', { exact: true }).fill('Guide test church');
-  await page.getByRole('button', { name: 'Create setup code', exact: true }).click();
-  const setup = page.getByLabel('1. Run Configure group in your spreadsheet and paste this private setup code.');
-  const code = await setup.inputValue();
-  const popupReady = page.waitForEvent('popup');
-  await page.getByRole('link', { name: 'Google Sheets setup instructions' }).click();
-  const popup = await popupReady;
+  assert.equal(await page.getByRole('button', { name: 'Create setup code' }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: 'administrator console' }).getAttribute('href'), 'https://console.closetprayer.com/');
+  const popup = await context.newPage();
+  await popup.goto(`${base}/guides/groups/`);
   popup.on('pageerror', error => errors.push(error.message));
   await popup.getByRole('heading', { level: 1, name: 'Church-owned prayer groups (pilot)' }).waitFor();
   assert.equal(new URL(popup.url()).pathname, '/guides/groups/');
-  assert.equal(await setup.inputValue(), code, 'Reading the guide must not lose the unfinished setup code.');
   await context.setOffline(true);
   await popup.reload();
   await popup.getByRole('heading', { level: 1, name: 'Church-owned prayer groups (pilot)' }).waitFor();
   assert.deepEqual(errors, []);
   await context.close();
-  console.log('PASS: static guide without JavaScript, mobile/desktop widths, anchors, exact downloads, print layout, setup preservation, and service-worker/offline routing.');
+  console.log('PASS: static guide without JavaScript, mobile/desktop widths, anchors, exact downloads, print layout, console-only creation, and service-worker/offline routing.');
 } finally { await browser.close(); }
