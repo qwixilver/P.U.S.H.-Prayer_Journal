@@ -9,9 +9,10 @@ credentials, and the church's deployment belong in the church's Google account.
 
 This implementation includes direct invitations, QR scanning, public submissions,
 spreadsheet moderation, daily/on-demand downloads, offline reading, and group-only
-sharing restrictions. The admin interface is the spreadsheet's Closet Prayer menu.
-A separate console subdomain and provider integrations beyond Google Apps Script
-are future work. Existing hosting and personal prayer records remain unchanged.
+sharing restrictions. The [administrator console](https://console.closetprayer.com/)
+supports Google login, prayer editing, moderation, and public submission embeds
+after the church upgrades its script. The spreadsheet menu remains available.
+Other providers are future work. Existing hosting and personal records are unchanged.
 
 Automated tests exercise the protocol, IndexedDB migration/transactions, and the
 service through Google API test doubles. Before real church use, complete the
@@ -32,6 +33,11 @@ administrator changes. A free Google account can be used within Google's quotas.
    Use [appsscript.json](../group-service/google-apps-script/appsscript.json).
    The script requests spreadsheet access and spreadsheet UI access. It does not
    need Drive-wide access, Gmail, or access to members' Google accounts.
+   The manifest also enables the **Sheets** advanced service. Check it appears in
+   the editor under **Services**; if absent use **Services + > Google Sheets API >
+   Add**. Default Apps Script Cloud projects enable the API automatically. A script
+   linked to a standard Cloud project also needs Google Sheets API enabled in that
+   project's API Library. See [Google's instructions](https://developers.google.com/apps-script/guides/services/advanced).
 4. In Closet Prayer, open **Settings > Manage groups > Set up a church-owned group**.
    Enter the group name and choose **Create setup code**. Keep this screen open.
    Keep a private copy of the generated setup code for recovery and updates.
@@ -49,6 +55,10 @@ administrator changes. A free Google account can be used within Google's quotas.
    It generates a private member link/QR and a separate public submission link/QR.
 8. Join through the private invitation, verify the group name and downloaded data,
    then complete the live checks below before distributing invitations.
+9. To manage in the console, choose **Closet Prayer > Enable administrator console**
+   in the spreadsheet and paste its public submission link. Open the console,
+   connect Google, and select this sheet. Share Editor access with any additional
+   administrators; do not share a Google password or make the sheet public.
 
 The links default to `https://closetprayer.com/`. During local development, replace
 only that app origin with the local test address, keeping the entire `#group=...`
@@ -57,6 +67,16 @@ Camera scanning requires HTTPS or localhost. Pasting a link also works without a
 camera. No connection is made for member invitations until the user confirms Join.
 
 ## Moderate prayers
+
+In the console, pending submissions offer **Review and approve** or **Decline**.
+Review the wording before approval. **New prayer** begins as a group-only draft;
+use **Publication** to publish when ready. **Edit prayer** changes wording, date,
+requested/answered status, publication, and permitted sharing. Group-only consent
+cannot be widened by approval/editing; shareable prayers can be restricted further.
+Contacts remain in Inbox, so do not copy private contact details into prayer wording.
+Members receive published changes on their next successful sync.
+
+The spreadsheet menu also remains available:
 
 - `Inbox` receives pending submissions. Contact details appear here only. Select
   the submitted rows and choose **Publish selected requests** or **Decline selected
@@ -80,12 +100,63 @@ camera. No connection is made for member invitations until the user confirms Joi
 Spreadsheet owners can edit all underlying values, including consent. These
 rules protect the supported workflow, not against a malicious account owner.
 
+Use the console or spreadsheet menu for normal changes. Direct cell edits, sorting,
+row deletion, and other API clients bypass the script's lock: coordinate any such
+maintenance with other administrators. Console saves reject stale edits rather
+than silently overwriting a newer version. Close the editor, refresh, then review
+the current record before editing again.
+
+## Upgrade an existing group for the console
+
+Keep the existing spreadsheet, script project, deployment URL, and private setup
+code. Make a private recovery copy of the sheet and retain the previous script
+version. A code release does not automatically update church deployments.
+
+1. In the existing bound Apps Script project, replace [Code.gs](../group-service/google-apps-script/Code.gs)
+   and [appsscript.json](../group-service/google-apps-script/appsscript.json).
+   Keep all `CP_*` properties. Do not configure a new group or generate replacement
+   keys just to enable the console.
+2. Check the **Sheets** advanced service as described in setup step 3 above.
+3. Save, then **Deploy > Manage deployments > Edit > New version > Deploy** for
+   the existing web app. Keep Execute as Me, access Anyone, and the same `/exec` URL.
+4. Reload the spreadsheet. Run **Closet Prayer > Enable administrator console**
+   with the existing **public submission link**, not the private member invitation.
+   Review any Google authorization prompt. This adds `ConsoleSettings` and
+   `ConsoleCommands` without clearing Requests or Inbox. Keep all tabs private.
+5. Reload the console, reconnect, and select the spreadsheet. Editing controls
+   should appear. Verify the service in **Church website submissions** to obtain
+   the public link and iframe. The service must identify this selected sheet.
+
+Do not replace working OAuth/API keys or add broader console permission scopes.
+If the public submission link was lost, recover it from the church's existing
+form/setup records. Re-run Enable administrator console if that key is rotated.
+Older groups remain readable in the console until this upgrade is complete.
+The [console guide](https://console.closetprayer.com/setup.html#management-upgrade)
+has a detailed walkthrough and live testing checklist.
+
+If a save loses its connection, use **Check / retry this save**. After reloading,
+refresh and inspect **Change history**, then **Check / finish pending change** if
+needed. Do not create another change until the earlier outcome is known. Signing
+out does not undo a queued change. Pending operations expire after 24 hours and
+require a console check/retry; there is no background worker. Commands and receipts
+remain in the private sheet, including prayer wording that was later changed or
+withdrawn. This is operational history, not a verified-author/tamper-proof audit log.
+
 ## Public submission form
 
-The setup screen supplies an iframe snippet for the public submission link. It
+The console's **Church website submissions** panel verifies the selected sheet's
+service and supplies an iframe snippet and a public link. The journal's group setup
+screen also supplies an iframe for newly configured groups. It
 targets this app with a submission-scoped code. No member credential is included.
 The form defaults to group-only, requires explicit consent, and stores submissions
 for review. It does not publish automatically or reveal other submissions.
+
+Paste the snippet into a church website HTML/embed block. No administrator login
+is required for visitors. The form is hosted on closetprayer.com and posts directly
+to the church service. No new domain or central prayer database is required. Test
+in a signed-out/private window and on a phone. If the church's website restricts
+frames, allow `https://closetprayer.com` in its frame policy. Avoid an iframe sandbox
+that disables scripts, forms, or origin access. Offer the public link as a fallback.
 
 Use a text-only form for this pilot. The service caps accepted submissions at 20
 per UTC hour and 100 per UTC day per group, limits field lengths, neutralizes
@@ -130,6 +201,10 @@ assess whether a church needs a CAPTCHA or a different provider for public traff
 The prototype accepts up to 1,000 published prayers and a 2 MB response, with up
 to 2,000 data rows in either spreadsheet tab. Archive older inbox/request rows when
 needed. Do not delete a pending row just to circumvent a submission limit.
+Console history is also capped at 2,000 data rows. Privately archive only completed
+command rows older than 24 hours, preserving headers and coordinating with other
+administrators. Never edit command payloads or delete pending commands as routine
+maintenance. Archive copies contain sensitive prayer wording too.
 Google's per-account quotas also apply; all this church's traffic uses its deploying
 account. The client uses a short randomized delay on automatic checks and retries
 later on failures. There is no guaranteed service availability.
@@ -155,7 +230,7 @@ key. A friendlier rotation/recovery interface is future work.
    not join; approval is required in the Groups screen.
 3. Load the public submission link and its iframe on a church test page. Submit a
    group-only test prayer. Verify it is pending in Inbox and absent from member sync.
-4. Approve it in the spreadsheet, then Sync now. Verify full-width text on mobile,
+4. Approve it in the console, then Sync now. Verify full-width text on mobile,
    visibility on Daily, and no way to add it to Security or export it.
 5. Publish a separate shareable prayer. Select it for Security, export it, and scan
    its animated QR on another device. Inspect the exported file for absence of keys
@@ -166,6 +241,13 @@ key. A friendlier rotation/recovery interface is future work.
 7. Leave a group during a slow sync. Its records must not reappear. Verify all
    existing personal prayers, journal entries, backups, and QR transfers still work.
 8. Export a personal backup and confirm group records/credentials are absent.
+9. With two Editors, open the same prayer and save different edits. The second,
+   stale edit must conflict. Submit another public prayer while editing a different
+   request; neither should be lost. Also check spreadsheet-menu changes against an
+   already-open console editor.
+10. Interrupt a console save, reconnect, and check/retry that same operation.
+    Confirm only one resulting prayer and an applied receipt. Revoke Editor access
+    and verify later reads/writes fail; an already queued command may still finish.
 
 ## Development verification
 

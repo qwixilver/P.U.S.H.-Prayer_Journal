@@ -1,5 +1,6 @@
 // Bind this script to a private church-owned Google Sheet. See docs/groups.md.
-// Public web requests have no administrative operations; admins use the Sheet menu.
+// Administrator commands originate in the private sheet via Google-authorized writes.
+// Public requests may process an existing command ID, never supply a command.
 const CP_REQUEST_HEADERS = ['id', 'publication', 'visibility', 'consent', 'title', 'description', 'requestor', 'requestedAt', 'status'];
 const CP_INBOX_HEADERS = ['id', 'receivedAt', 'title', 'description', 'requestor', 'contact', 'allowedSharing', 'reviewStatus'];
 const CP_TOKEN_PATTERN = /^[a-zA-Z0-9_-]{43}$/;
@@ -8,6 +9,7 @@ const CP_UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Closet Prayer')
     .addItem('Configure group', 'configureGroup')
+    .addItem('Enable administrator console', 'enableAdministratorConsole')
     .addItem('Add draft prayer', 'addDraftPrayer')
     .addItem('Publish selected requests', 'publishSelectedRequests')
     .addItem('Decline selected submissions', 'declineSelectedSubmissions')
@@ -122,12 +124,18 @@ function cpHandleRequest_(request) {
       request.groupId !== properties.getProperty('CP_GROUP_ID')) return deny;
   if (request.action === 'sync') {
     if (!cpCredentialMatches_(request.token, properties.getProperty('CP_MEMBER_HASH'))) return deny;
-    return cpSnapshot_(request.revision);
+    return cpWithLock_(function () { return cpSnapshot_(request.revision); });
   }
   if (request.action === 'submit-info' || request.action === 'submit') {
     if (!cpCredentialMatches_(request.token, properties.getProperty('CP_SUBMIT_HASH'))) return deny;
     if (request.action === 'submit-info') return cpResult_({});
     return cpSubmit_(request);
+  }
+  if (request.action === 'console-info' || request.action === 'console-process') {
+    if (!cpCredentialMatches_(request.token, properties.getProperty('CP_SUBMIT_HASH')) ||
+        properties.getProperty('CP_CONSOLE_VERSION') !== '1') return deny;
+    if (request.action === 'console-info') return cpResult_({ consoleVersion: 1, sheetId: properties.getProperty('CP_SHEET_ID') });
+    return cpProcessCommand_(request.requestId);
   }
   return deny;
 }
@@ -185,7 +193,10 @@ function cpSubmit_(request) {
 function cpWithLock_(action) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(4000)) throw new Error('Group busy.');
-  try { return action(); } finally { lock.releaseLock(); }
+  try { return action(); } finally {
+    // Finish any buffered spreadsheet-menu writes before another writer enters.
+    try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+  }
 }
 
 function cpSelection_(name, headers) {
@@ -253,3 +264,157 @@ function cpUpdateSelected_(column, value) {
 function withdrawSelectedPrayers() { cpUpdateSelected_(2, 'withdrawn'); }
 function answerSelectedPrayers() { cpUpdateSelected_(9, 'answered'); }
 function restrictSelectedPrayers() { cpUpdateSelected_(3, 'group-only'); }
+
+const CP_CONSOLE_HEADERS = ['key', 'value'];
+const CP_COMMAND_HEADERS = ['id', 'createdAt', 'command', 'outcome', 'completedAt'];
+
+function enableAdministratorConsole() {
+  const ui = SpreadsheetApp.getUi();
+  const prompt = ui.prompt('Enable administrator console', 'Paste this group\'s PUBLIC submission link (not its private member invitation). Update this script and its manifest, enable the Google Sheets advanced service, and update the existing web deployment first.', ui.ButtonSet.OK_CANCEL);
+  if (prompt.getSelectedButton() !== ui.Button.OK) return;
+  const input = prompt.getResponseText().trim();
+  const code = input.indexOf('#group=') >= 0 ? input.split('#group=')[1] : input;
+  const parts = code.split('.');
+  const properties = PropertiesService.getScriptProperties();
+  if (parts.length !== 5 || parts[0] !== 'CPG1' || parts[1] !== 's' ||
+      !/^[a-zA-Z0-9_-]{16,160}$/.test(parts[2]) || parts[3] !== properties.getProperty('CP_GROUP_ID') ||
+      !cpCredentialMatches_(parts[4], properties.getProperty('CP_SUBMIT_HASH'))) throw new Error('Use the public submission link for this configured group.');
+  cpWithLock_(function () {
+    const spreadsheet = SpreadsheetApp.openById(properties.getProperty('CP_SHEET_ID'));
+    // A read proves the advanced service is authorized before enabling writes.
+    Sheets.Spreadsheets.get(spreadsheet.getId(), { fields: 'spreadsheetId' });
+    const settings = cpEnsureSheet_(spreadsheet, 'ConsoleSettings', CP_CONSOLE_HEADERS);
+    cpEnsureSheet_(spreadsheet, 'ConsoleCommands', CP_COMMAND_HEADERS);
+    settings.getRange(2, 1, 5, 2).setNumberFormat('@').setValues([
+      ['protocol', 'cp-console'], ['version', '1'], ['groupId', parts[3]],
+      ['endpoint', 'https://script.google.com/macros/s/' + parts[2] + '/exec'], ['submissionToken', parts[4]]
+    ]);
+    SpreadsheetApp.flush();
+    properties.setProperty('CP_CONSOLE_VERSION', '1');
+  });
+  ui.alert('Console enabled. Select this sheet at console.closetprayer.com. Keep every tab private. Manage through the console or the Sheet menu; avoid direct cell/row edits while someone is saving. Re-run this setup if you rotate the public submission key.');
+}
+
+function cpRevisionDate_(value) {
+  // The Sheets REST API exposes native dates as timezone-free serial numbers.
+  // Match that wall-clock representation for hashes, but preserve actual dates on save.
+  if (value instanceof Date) {
+    const spreadsheet = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('CP_SHEET_ID'));
+    return Utilities.formatDate(value, spreadsheet.getSpreadsheetTimeZone(), "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+  }
+  return new Date(value).toISOString();
+}
+
+function cpRowRevision_(row, headers) {
+  return cpHash_(JSON.stringify(headers.map(function (key) {
+    return key === 'requestedAt' || key === 'receivedAt' ? cpRevisionDate_(row[key]) : row[key];
+  })));
+}
+
+function cpCommandError_(code) { const error = new Error(code); error.commandCode = code; throw error; }
+
+function cpUniqueRows_(sheet, headers) {
+  const ids = new Set();
+  return cpReadRows_(sheet, headers).filter(function (row) {
+    if (headers.every(function (key) { return row[key] === '' || row[key] == null; })) return false;
+    if (!CP_UUID_PATTERN.test(row.id || '') || ids.has(row.id.toLowerCase())) cpCommandError_('rejected');
+    ids.add(row.id.toLowerCase());
+    return true;
+  });
+}
+
+function cpCells_(values) {
+  // stringValue, unlike user-entered text, cannot execute a spreadsheet formula.
+  return values.map(function (value) { return { userEnteredValue: { stringValue: String(value) } }; });
+}
+
+function cpWriteCells_(sheet, row, column, values) {
+  return { updateCells: { start: { sheetId: sheet.getSheetId(), rowIndex: row - 1, columnIndex: column - 1 },
+    rows: [{ values: cpCells_(values) }], fields: 'userEnteredValue' } };
+}
+
+function cpPrayerValues_(command, consent, requestedAt) {
+  const prayer = command.prayer;
+  if (!prayer || !['draft', 'published', 'withdrawn'].includes(prayer.publication) ||
+      !['requested', 'answered'].includes(prayer.status) || !['group-only', 'shareable'].includes(prayer.visibility) ||
+      !['group-only', 'shareable'].includes(consent) || (prayer.visibility === 'shareable' && consent !== 'shareable')) cpCommandError_('rejected');
+  if (!requestedAt || !Number.isFinite(new Date(requestedAt).getTime())) cpCommandError_('rejected');
+  return [command.id, prayer.publication, prayer.visibility, consent,
+    cpText_(prayer.title, 200, true), cpText_(prayer.description, 10000, false),
+    cpText_(prayer.requestor, 120, false), new Date(requestedAt).toISOString(), prayer.status];
+}
+
+function cpPrepareCommand_(command) {
+  if (!command || command.version !== 1 || !CP_UUID_PATTERN.test(command.id || '') ||
+      !['create', 'update', 'approve', 'decline'].includes(command.type)) cpCommandError_('rejected');
+  const requests = cpSheet_('Requests'), inbox = cpSheet_('Inbox');
+  const prayers = cpUniqueRows_(requests, CP_REQUEST_HEADERS);
+  const submissions = cpUniqueRows_(inbox, CP_INBOX_HEADERS);
+  const previous = prayers.find(function (row) { return row.id.toLowerCase() === command.id.toLowerCase(); });
+  const submission = submissions.find(function (row) { return row.id.toLowerCase() === command.id.toLowerCase(); });
+  let values;
+  const changes = [];
+  if (command.type === 'create') {
+    if (previous || submission) cpCommandError_('conflict');
+    values = cpPrayerValues_(command, command.prayer && command.prayer.consent, command.prayer && command.prayer.requestedAt);
+  } else {
+    const source = command.type === 'update' ? previous : submission;
+    const headers = command.type === 'update' ? CP_REQUEST_HEADERS : CP_INBOX_HEADERS;
+    if (!source || command.expected !== cpRowRevision_(source, headers)) cpCommandError_('conflict');
+    if (command.type === 'update') {
+      let requestedAt = command.prayer && command.prayer.requestedAt;
+      if (previous.requestedAt instanceof Date && requestedAt === cpRevisionDate_(previous.requestedAt)) requestedAt = previous.requestedAt;
+      values = cpPrayerValues_(command, previous.consent, requestedAt);
+    } else {
+      if (submission.reviewStatus !== 'pending' || previous) cpCommandError_('conflict');
+      if (command.type === 'approve') {
+        if (previous) cpCommandError_('conflict');
+        if (!command.prayer || command.prayer.publication !== 'published') cpCommandError_('rejected');
+        values = cpPrayerValues_(command, submission.allowedSharing, submission.receivedAt);
+      }
+      changes.push(cpWriteCells_(inbox, submission.sheetRow, 8, [command.type === 'approve' ? 'approved' : 'declined']));
+    }
+  }
+  if (values) {
+    if (command.type === 'update') changes.push(cpWriteCells_(requests, previous.sheetRow, 1, values));
+    else {
+      if (requests.getLastRow() >= 2001) cpCommandError_('rejected');
+      changes.push({ appendCells: { sheetId: requests.getSheetId(), rows: [{ values: cpCells_(values) }], fields: 'userEnteredValue' } });
+    }
+    // Enforce the member-feed limits before publishing, not after breaking sync.
+    const candidate = prayers.filter(function (row) { return row.id.toLowerCase() !== command.id.toLowerCase(); });
+    candidate.push(Object.fromEntries(CP_REQUEST_HEADERS.map(function (key, index) { return [key, values[index]]; })));
+    const published = candidate.filter(function (row) { return row.publication === 'published'; });
+    if (published.length > 1000 || Utilities.newBlob(JSON.stringify(published)).getBytes().length > 1800000) cpCommandError_('rejected');
+  }
+  return changes;
+}
+
+function cpProcessCommand_(id) {
+  if (!CP_UUID_PATTERN.test(id || '')) throw new Error('Invalid command ID.');
+  return cpWithLock_(function () {
+    const sheet = cpSheet_('ConsoleCommands');
+    const rows = cpReadRows_(sheet, CP_COMMAND_HEADERS).filter(function (row) { return row.id === id; });
+    if (!rows.length) return cpResult_({ outcome: 'not-found' });
+    if (rows.some(function (row) { return row.command !== rows[0].command; })) return cpResult_({ outcome: 'rejected' });
+    const terminal = rows.find(function (row) { return ['applied', 'conflict', 'rejected', 'expired'].includes(row.outcome); });
+    if (terminal) return cpResult_({ outcome: terminal.outcome });
+    let outcome = 'applied', changes = [];
+    try {
+      if (rows.some(function (row) { return row.outcome !== 'pending'; }) || typeof rows[0].command !== 'string' || rows[0].command.length > 16000) cpCommandError_('rejected');
+      const age = Date.now() - new Date(rows[0].createdAt).getTime();
+      if (!Number.isFinite(age) || age < -300000 || age > 86400000) cpCommandError_('expired');
+      changes = cpPrepareCommand_(JSON.parse(rows[0].command));
+    } catch (error) {
+      outcome = ['conflict', 'expired'].includes(error.commandCode) ? error.commandCode : 'rejected';
+      changes = [];
+    }
+    const completedAt = new Date().toISOString();
+    rows.forEach(function (row) { changes.push(cpWriteCells_(sheet, row.sheetRow, 4, [outcome, completedAt])); });
+    // Prayer, moderation status and durable receipts succeed or fail together.
+    // All supported script/menu writers share this lock. Direct Sheet/API edits
+    // do not honor it; administrators must not edit cells concurrently with saves.
+    Sheets.Spreadsheets.batchUpdate({ requests: changes }, PropertiesService.getScriptProperties().getProperty('CP_SHEET_ID'));
+    return cpResult_({ outcome: outcome });
+  });
+}

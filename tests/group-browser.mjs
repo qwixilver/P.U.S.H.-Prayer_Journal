@@ -22,7 +22,7 @@ const traffic = [];
 const errors = [];
 const context = await browser.newContext({ viewport: { width: 360, height: 800 }, serviceWorkers: 'block' });
 await context.addInitScript(() => localStorage.setItem('cp:onboarded', '1'));
-await context.route('https://script.google.com/**', async route => {
+async function groupResponse(route) {
   assert.equal(route.request().method(), 'POST', 'Group requests must not require a preflight.');
   const body = route.request().postDataJSON();
   traffic.push(body);
@@ -30,7 +30,8 @@ await context.route('https://script.google.com/**', async route => {
   if (body.action === 'sync') Object.assign(payload, { complete: true, revision: 'browser_revision', prayers: rows });
   if (body.action === 'submit') Object.assign(payload, { accepted: true });
   await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(payload) });
-});
+}
+await context.route('https://script.google.com/**', groupResponse);
 const page = await context.newPage();
 page.on('pageerror', error => errors.push(error.message));
 
@@ -124,5 +125,36 @@ try {
   assert.equal(submitted.token, 'S'.repeat(43));
   await widthCheck();
   assert.deepEqual(errors, []);
-  console.log('PASS: mobile invitations, consent, direct fetch, privacy, QR display, backup isolation, withdrawal, offline reading, public submission, and no horizontal overflow.');
+  const embeddedContext = await browser.newContext({ viewport: { width: 360, height: 800 }, serviceWorkers: 'block' });
+  try {
+    await embeddedContext.route('https://script.google.com/**', groupResponse);
+    // Use two fake public origins to avoid browser local-network-access rules
+    // interfering with the embedding test. Serve the real build through our preview.
+    const parent = 'https://church.example.invalid/embed';
+    const embeddedLink = submitLink.replace(base, 'https://form.example.invalid');
+    await embeddedContext.route('https://form.example.invalid/**', async route => {
+      const target = new URL(route.request().url());
+      const response = await fetch(base + target.pathname + target.search);
+      await route.fulfill({ status: response.status, contentType: response.headers.get('content-type') || 'application/octet-stream', body: Buffer.from(await response.arrayBuffer()) });
+    });
+    await embeddedContext.route(parent, route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><h1>Church test page</h1><iframe src="${embeddedLink}" title="Submit a prayer request" width="100%" height="950" style="border:0" referrerpolicy="no-referrer"></iframe>` }));
+    const church = await embeddedContext.newPage();
+    church.on('pageerror', error => errors.push(error.message));
+    await church.goto(parent);
+    const form = church.frameLocator('iframe');
+    await form.getByText('Test Church', { exact: true }).waitFor();
+    assert.equal(await form.getByRole('navigation').count(), 0);
+    await form.getByLabel('Prayer title', { exact: true }).fill('Embedded submission');
+    await form.getByLabel('Prayer request', { exact: true }).fill('Fictional iframe test');
+    await form.getByRole('checkbox', { name: /I agree/ }).check();
+    await form.getByRole('button', { name: 'Send for review', exact: true }).click();
+    await form.getByRole('status').filter({ hasText: 'sent to the group administrator' }).waitFor();
+    const request = traffic.filter(request => request.action === 'submit').at(-1);
+    assert.equal(request.submission.name, 'Embedded submission');
+    assert.equal(request.submission.visibility, 'group-only');
+    assert.equal(request.token, 'S'.repeat(43));
+    assert.equal(await form.locator('html').evaluate(root => root.scrollWidth <= innerWidth), true);
+    assert.deepEqual(errors, []);
+  } finally { await embeddedContext.close(); }
+  console.log('PASS: mobile invitations, consent, direct fetch, privacy, QR display, backup isolation, withdrawal, offline reading, public submission, cross-origin iframe in a fresh session, and no horizontal overflow.');
 } finally { await context.close(); await browser.close(); }

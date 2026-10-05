@@ -33,7 +33,7 @@ export default function GroupSetup() {
     <details className="rounded-lg bg-gray-800 p-4 shadow">
       <summary className="cursor-pointer font-semibold">Set up a church-owned group (pilot)</summary>
       <div className="mt-4 space-y-3 text-sm text-gray-300">
-        <p>Use a private Google Sheet in your church's account. The administrator installs the supplied script and approves submissions there.</p>
+        <p>Use a private Google Sheet in your church's account. Install the supplied script, then manage prayers and submissions in the administrator console or spreadsheet menu.</p>
         <a className="text-yellow-300 underline" href="/guides/groups/" target="_blank" rel="noreferrer">Google Sheets setup instructions</a>
         <p>The setup code contains private access keys. Keep this screen open until setup is finished, and keep a private copy of the code for recovery. Only the member invitation is for members; only the submission link belongs on a public website.</p>
         {!config ? <>
@@ -66,6 +66,7 @@ export default function GroupSetup() {
               value={`<iframe src="${links.submit}" title="Submit a prayer request" width="100%" height="850" style="border:0" referrerpolicy="no-referrer"></iframe>`} />
           </label>
           <p>Join with the private invitation to verify the deployment before giving it to members. Anyone holding that invitation can read the group's approved prayers.</p>
+          <p>For console management, run Enable administrator console in the spreadsheet with the public submission link above. Then <a className="text-yellow-300 underline" href="https://console.closetprayer.com/" target="_blank" rel="noreferrer">open the administrator console</a> and select this sheet.</p>
         </>}
       </div>
     </details>
