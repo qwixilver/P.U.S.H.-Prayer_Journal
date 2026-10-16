@@ -2,13 +2,15 @@
 // Edits a requestor, including category changes and archive status.
 
 import React, { useEffect, useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function RequestorEditForm({
   requestor,
   onCancel,
   onSuccess,
 }) {
+  const db = useJournalDatabase();
   const [categories, setCategories] = useState([]);
   const [categoryId, setCategoryId] = useState(requestor.categoryId);
   const [name, setName] = useState(requestor.name || '');

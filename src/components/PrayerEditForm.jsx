@@ -1,7 +1,7 @@
 // src/components/PrayerEditForm.jsx
 
 import React, { useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 /**
  * PrayerEditForm allows editing and deleting of an existing prayer request.
@@ -21,6 +21,7 @@ import { db } from '../db';
  * - onSuccess: () => void        // Called after a successful save or delete
  */
 export default function PrayerEditForm({ prayer, onCancel, onSuccess }) {
+  const db = useJournalDatabase();
   // Form state initialized from the passed-in prayer object
   const [name, setName] = useState(prayer.name);
   const [description, setDescription] = useState(prayer.description || '');

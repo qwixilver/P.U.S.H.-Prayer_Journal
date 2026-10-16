@@ -11,7 +11,7 @@ import JournalList from './components/JournalList';
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencyRestore from './components/EmergencyRestore';
 import Settings from './components/Settings';
-import TutorialModal from './components/TutorialModal';
+import TutorialWorkspace from './components/TutorialWorkspace';
 import GroupsPage from './components/GroupsPage';
 import GroupSubmissionPage from './components/GroupSubmissionPage';
 import { parseGroupInvitation } from './utils/groupProtocol';
@@ -89,7 +89,7 @@ export default function App() {
   const [showRestore, setShowRestore] = useState(
     () => window.location.hash.toLowerCase() === '#restore'
   );
-  const [showTutorial, setShowTutorial] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => !initialIntent.invitation && !localStorage.getItem(ONBOARDED_KEY));
 
   const handleTabChange = useCallback((tab) => {
     if (!VALID_TABS.has(tab) || tab === 'restore') return;
@@ -120,9 +120,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'group-submit') return undefined;
+    if (activeTab === 'group-submit' || showTutorial) return undefined;
     return startGroupSync();
-  }, [activeTab === 'group-submit']);
+  }, [activeTab === 'group-submit', showTutorial]);
 
   useEffect(() => {
     if (!groupInvitation || activeTab !== 'groups') return;
@@ -174,7 +174,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!pendingLaunchAction) return undefined;
+    if (!pendingLaunchAction || showTutorial) return undefined;
 
     const route = LAUNCH_ACTIONS[pendingLaunchAction];
     if (!route || route.tab !== activeTab) return undefined;
@@ -191,7 +191,13 @@ export default function App() {
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [activeTab, pendingLaunchAction]);
+  }, [activeTab, pendingLaunchAction, showTutorial]);
+
+  if (showTutorial && !showRestore) return <TutorialWorkspace onClose={tab => {
+    localStorage.setItem(ONBOARDED_KEY, '1');
+    setShowTutorial(false);
+    if (tab) handleTabChange(tab);
+  }} />;
 
   return (
     <>
@@ -221,15 +227,6 @@ export default function App() {
       </main>
 
       {activeTab !== 'group-submit' && <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />}
-
-      {showTutorial && (
-        <TutorialModal
-          onClose={() => {
-            localStorage.setItem(ONBOARDED_KEY, '1');
-            setShowTutorial(false);
-          }}
-        />
-      )}
 
       {showRestore && (
         <EmergencyRestore

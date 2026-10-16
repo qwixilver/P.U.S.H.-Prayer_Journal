@@ -2,9 +2,10 @@
 // Form for adding a category and choosing whether its requests appear in Focus.
 
 import React, { useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 function CategoryForm({ onSuccess }) {
+  const db = useJournalDatabase();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [showSingle, setShowSingle] = useState(false);

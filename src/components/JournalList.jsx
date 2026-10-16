@@ -3,7 +3,7 @@
 // add/edit controls, db refresh, and PWA launch-action support.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 import JournalForm from './JournalForm';
 import JournalEditForm from './JournalEditForm';
 import DataExportButton from './DataExportButton';
@@ -25,9 +25,10 @@ function ciIncludes(haystack = '', needle = '') {
 }
 
 export default function JournalList() {
+  const db = useJournalDatabase();
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState({});
+  const [expanded, setExpanded] = useState(db.isTutorial && db.tutorialStage === 'journal-text' ? { 1: true } : {});
   const [editing, setEditing] = useState({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [query, setQuery] = useState('');
@@ -285,6 +286,7 @@ export default function JournalList() {
 
                       <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                         <button
+                          data-tour="journal-read"
                           type="button"
                           onClick={() => toggleEntry(entry.id)}
                           className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
@@ -323,6 +325,7 @@ export default function JournalList() {
 
                     {isExpanded && (
                       <div
+                        data-tour="journal-entry"
                         id={`journal-entry-${entry.id}`}
                         className="mt-3 text-gray-100 prose-invert"
                       >

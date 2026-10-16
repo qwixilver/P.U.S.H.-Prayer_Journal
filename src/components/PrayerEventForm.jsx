@@ -11,11 +11,13 @@
 // - Emits `db:changed` so other components refresh.
 
 import React, { useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function PrayerEventForm({ prayerId, onSuccess, onCancel }) {
-  const [title, setTitle] = useState('');
-  const [note, setNote] = useState('');
+  const db = useJournalDatabase();
+  const [title, setTitle] = useState(db.isTutorial ? 'Good news' : '');
+  const [note, setNote] = useState(db.isTutorial ? 'Alex is recovering well and is grateful for everyone praying.' : '');
   // Use local datetime input; convert to ISO on save
   const [when, setWhen] = useState(() => {
     const d = new Date();
@@ -65,7 +67,7 @@ export default function PrayerEventForm({ prayerId, onSuccess, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-gray-700 rounded p-3">
+    <form data-tour="event-form" onSubmit={handleSubmit} className="bg-gray-700 rounded p-3">
       <h5 className="text-white font-semibold mb-2">Add Event</h5>
 
       {/* When */}
@@ -113,7 +115,7 @@ export default function PrayerEventForm({ prayerId, onSuccess, onCancel }) {
         >
           {busy ? 'Saving…' : 'Save Event'}
         </button>
-        {onCancel && (
+        {onCancel && !db.isTutorial && (
           <button
             type="button"
             onClick={onCancel}

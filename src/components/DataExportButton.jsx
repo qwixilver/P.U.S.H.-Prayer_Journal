@@ -3,6 +3,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { downloadJson, exportSelectionSmart } from '../utils/backup';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function DataExportButton({
   kind,
@@ -11,6 +12,7 @@ export default function DataExportButton({
   className = '',
   title,
 }) {
+  const database = useJournalDatabase();
   const [state, setState] = useState('idle');
   const resetTimerRef = useRef(null);
 
@@ -19,7 +21,7 @@ export default function DataExportButton({
   }, []);
 
   async function handleExport() {
-    if (state === 'working') return;
+    if (state === 'working' || database.isTutorial) return;
 
     clearTimeout(resetTimerRef.current);
     setState('working');
@@ -43,7 +45,7 @@ export default function DataExportButton({
     <button
       type="button"
       onClick={handleExport}
-      disabled={state === 'working'}
+      disabled={state === 'working' || database.isTutorial}
       className={`text-sm px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:cursor-wait disabled:opacity-70 ${className}`.trim()}
       title={title || `Export this ${kind} as a portable database package`}
     >

@@ -36,6 +36,7 @@ export default function BottomNav({ activeTab, onTabChange }) {
 
           return (
             <button
+              data-tour={`nav-${tab.key}`}
               key={tab.key}
               type="button"
               onClick={() => change(tab.key)}

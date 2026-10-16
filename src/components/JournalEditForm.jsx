@@ -3,9 +3,11 @@
 // Props: entry (required), onSuccess(), onCancel()
 
 import React, { useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function JournalEditForm({ entry, onSuccess, onCancel }) {
+  const db = useJournalDatabase();
   const [title, setTitle] = useState(entry.title || '');
   const [text, setText] = useState(entry.text || '');
   const [busy, setBusy] = useState(false);

@@ -1,62 +1,27 @@
-// src/utils/tutorialSlides.js
-// First-run tutorial content with user-facing Focus terminology.
-
-const slides = [
-  {
-    title: 'Welcome to Closet Prayer',
-    body:
-      'This app helps you track prayer requests, updates, and answers—privately, on your device. No account, no cloud by default.',
-    cta: 'Get started',
-  },
-  {
-    title: 'Your main tabs',
-    body:
-      'Daily (lists requests, grouped), Focus (one-at-a-time), Categories (organize people + requests), Security (private-only), Journal (personal notes), Settings (backup/restore & options).',
-    cta: 'Next',
-  },
-  {
-    title: 'The categories tab (start here)',
-    body:
-      'Create categories (e.g., Family, Church, Urgent). Add requestors inside categories. Requestors are those who requested you pray for something. Categories can also control which requests are eligible for Focus.',
-    cta: 'Next',
-  },
-  {
-    title: 'The Daily tab',
-    body:
-      'Tap the + button to add a new prayer. This is where you record what your requestors have asked for, and your notes on how you are talking to God about it. It also serves as a list of things you will pray for daily.',
-    cta: 'Next',
-  },
-  {
-    title: 'The Focus tab',
-    body:
-      "Focus shows one eligible prayer request at a time. Open an eligible request with its Focus button, or use the tab to begin with a random request. The 'Next' button randomly selects another eligible request.",
-    cta: 'Next',
-  },
-  {
-    title: 'Record how God moves — the events system',
-    body:
-      "Add Events to any request to build a chronological timeline of what happened and when. Select 'Add event' from Focus or expand a request with its Details button in Daily.",
-    cta: 'Next',
-  },
-  {
-    title: 'Personal journaling (Journal tab)',
-    body:
-      'Write free-form entries about your walk with God. Supports Markdown (e.g., bold, italic, lists). Search across your entries.',
-    cta: 'Next',
-  },
-  {
-    title: 'Securely share requests (Security tab)',
-    body:
-      'Security only shows entries marked for the Security view. This allows you to visually share specific requests with other people without sharing your entire journal.',
-    cta: 'Next',
-  },
-  {
-    title: 'Private by default',
-    body:
-      'Data lives locally (IndexedDB). Use Settings → Backup/Restore to export/import. You can install this app to your Home Screen for offline use.',
-    cta: 'Finish',
-    secondaryCta: 'Open Settings',
-  },
+const target = name => `[data-tour="${name}"]`;
+const steps = [
+  { id: 'welcome', title: 'Make room for prayer', body: 'Take a short, hands-on tour of Closet Prayer. You will use fictional requests and people. Everything you try here disappears when you finish; your own journal stays untouched.', cta: 'Start the walkthrough' },
+  { id: 'categories', target: target('nav-categories'), title: 'Start with Categories', body: 'Categories organize the people you pray for, such as Family or Church. Tap Categories in the bottom bar.', action: 'click' },
+  { id: 'people', target: target('category-expand'), title: 'See who is in a category', body: 'We made a practice Family category. Use Show requestors to open it. The + button is where you will add your own categories later.', action: 'click' },
+  { id: 'requestor', target: target('requestor-info'), title: 'A person behind each request', body: 'Alex is a fictional requestor: the person who asked you to pray. You can add more people using the form above. Tap this highlighted example to continue.', action: 'inspect' },
+  { id: 'daily', target: target('nav-daily'), title: 'Your everyday prayer list', body: 'Daily brings your requests together, grouped by category and person. Tap Daily.', action: 'click' },
+  { id: 'add', target: target('prayer-add'), title: 'Add a prayer request', body: 'Tap the highlighted + button to try adding a request. This one will only be saved in the practice tour.', action: 'click' },
+  { id: 'prayer-form', target: target('prayer-form'), title: 'Try saving a request', body: 'We filled in a sample for Alex. Change it if you like, then scroll down and tap Add Prayer. Category and Requestor keep it organized. Security is an optional display list, not encryption.', action: 'write', table: 'prayers', form: true },
+  { id: 'details', target: target('prayer-details'), title: 'Read the whole request', body: 'Tap Details to expand a prayer and see its timeline of updates.', action: 'click' },
+  { id: 'focus', target: target('prayer-focus'), title: 'Give one request your attention', body: 'Tap this request\'s Focus button to pray through it on its own. Categories must have Focus enabled for their requests to appear here.', action: 'click' },
+  { id: 'context', target: target('focus-context'), title: 'Keep the person in mind', body: 'Focus shows the requestor and category beside the request. Tap the highlighted information to continue.', action: 'inspect' },
+  { id: 'add-event', target: target('focus-event'), title: 'Keep a story, not just a list', body: 'Events record progress, encouragement, and answers over time. Tap Add event.', action: 'click' },
+  { id: 'event-form', target: target('event-form'), title: 'Add a practice update', body: 'We filled in some good news. Edit the sample or leave it as it is, then tap Save Event. It becomes part of this prayer\'s timeline.', action: 'write', table: 'events', form: true },
+  { id: 'next', target: target('focus-next'), title: 'Move to another prayer', body: 'Next chooses an eligible request at random. Tap it to continue your prayer time.', action: 'click' },
+  { id: 'journal', target: target('nav-journal'), title: 'Room for your own reflections', body: 'Journal is for personal notes, prayers, and gratitude beyond individual requests. Tap Journal.', action: 'click' },
+  { id: 'read', target: target('journal-read'), title: 'Open a journal entry', body: 'Tap Read on this sample entry. The + button creates a new entry, and the search box helps you find an older one.', action: 'click' },
+  { id: 'journal-text', target: target('journal-entry'), title: 'Write in your own style', body: 'Journal entries support simple formatting such as bold text and lists. This reflection is only an example. Tap it to continue.', action: 'inspect' },
+  { id: 'security', target: target('nav-security'), title: 'Choose what others can see', body: 'Security is a curated view for requests you choose to show or share. Tap Security.', action: 'click' },
+  { id: 'sharing', target: target('security-prayer'), title: 'Share deliberately', body: 'Only selected requests appear here. QR sharing and exports are available outside this practice tour. Security view does not encrypt requests; Private Vault in Settings handles encryption. Group-only requests cannot use the app\'s sharing controls. Tap the example.', action: 'inspect' },
+  { id: 'settings', target: target('nav-settings'), title: 'Make the app work for you', body: 'Tap Settings to see a safe preview of backups, reminders, and groups.', action: 'click' },
+  { id: 'backup', target: target('settings-backup'), title: 'Keep a backup you control', body: 'Personal records live on this device. In the real Settings screen, export a backup regularly and import it when moving devices. Private Vault offers encryption. Tap this preview to continue.', action: 'inspect' },
+  { id: 'reminders', target: target('settings-reminders'), title: 'A gentle reminder to pray', body: 'Choose reminders and test their appearance in Settings. The app supplies its own icon and badge; your device controls grouping and delivery. No notification permission is requested during this tour. Tap the preview.', action: 'inspect' },
+  { id: 'groups', target: target('settings-groups'), title: 'Pray with your church', body: 'Join with a church invitation, submit a request for review, and refresh your groups from Settings. Your personal journal is not uploaded when you join. This tour connects to no group. Tap the preview.', action: 'inspect' },
+  { id: 'finish', title: 'You are ready to begin', body: 'Your practice requests and updates will now disappear. Start by creating a category, adding a requestor, and recording a prayer. You can replay this walkthrough from Settings whenever you need it.', cta: 'Finish walkthrough' },
 ];
-
-export default slides;
+export default steps;

@@ -7,6 +7,7 @@
 // - No servers, no push endpoints, no accounts.
 
 import { db } from '../db';
+import { notificationOptions } from './notificationPresentation';
 
 // ---------- constants & storage keys ----------
 const CFG_KEY = 'cp:notifications:v1';
@@ -380,11 +381,9 @@ export async function scheduleNotifications(config) {
         const tag = `${SCHEDULE_TAG_PREFIX}${timestamp}`;
 
         await registration.showNotification(payload.title, {
-          body: payload.body,
-          tag,
+          ...notificationOptions({ ...payload, tag, timestamp }),
           // @ts-ignore - experimental
           showTrigger: new TimestampTrigger(timestamp),
-          data: { hash: payload.hash, timestamp },
         });
       }
     } catch (error) {
@@ -403,10 +402,14 @@ export async function scheduleNotifications(config) {
         try {
           const payload = await buildPayload(config);
 
-          new Notification(payload.title, {
-            body: payload.body,
-            tag: `${SCHEDULE_TAG_PREFIX}${timestamp}`,
-          });
+          const options = notificationOptions({ ...payload, tag: `${SCHEDULE_TAG_PREFIX}${timestamp}`, timestamp });
+          const registration = 'serviceWorker' in navigator
+            ? await navigator.serviceWorker.getRegistration() : null;
+          if (registration?.active) await registration.showNotification(payload.title, options);
+          else {
+            const notification = new Notification(payload.title, options);
+            notification.onclick = () => { window.focus(); window.location.hash = payload.hash; notification.close(); };
+          }
         } catch {
           // A failed occurrence should not stop later scheduled reminders.
         }

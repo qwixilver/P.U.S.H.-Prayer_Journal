@@ -2,7 +2,7 @@
 // Adds a new active requestor under a specific category in IndexedDB.
 
 import React, { useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 /**
  * RequestorForm allows creation of a new requestor for a given category.
@@ -11,6 +11,7 @@ import { db } from '../db';
  *   - onSuccess: callback invoked after successful creation to refresh parent list
  */
 function RequestorForm({ categoryId, onSuccess }) {
+  const db = useJournalDatabase();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [security, setSecurity] = useState(false);

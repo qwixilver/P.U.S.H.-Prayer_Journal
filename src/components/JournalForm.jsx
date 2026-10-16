@@ -3,9 +3,11 @@
 // Props: onSuccess(), onCancel() (both optional)
 
 import React, { useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function JournalForm({ onSuccess, onCancel }) {
+  const db = useJournalDatabase();
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);

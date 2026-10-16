@@ -3,7 +3,7 @@
 // prayer events, explicit detail controls, add/edit controls, and PWA actions.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 import PrayerForm from './PrayerForm';
 import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
@@ -61,18 +61,19 @@ export default function PrayerList({
   onFocusPrayer,
 }) {
   const isSecurity = isSecurityProp || viewType === 'security';
+  const db = useJournalDatabase();
   const [categories, setCategories] = useState([]);
   const [requestors, setRequestors] = useState([]);
   const [prayers, setPrayers] = useState([]);
   const [addingEventFor, setAddingEventFor] = useState({});
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(db.isTutorial && db.tutorialStage === 'prayer-form');
   const [editTarget, setEditTarget] = useState(null);
   const [qrSharePrayer, setQrSharePrayer] = useState(null);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [dailyStatusFilters, setDailyStatusFilters] = useState(
-    loadDailyStatusFilters
+    () => db.isTutorial ? { showRequested: true, showAnswered: true } : loadDailyStatusFilters()
   );
 
   async function load() {
@@ -237,7 +238,7 @@ export default function PrayerList({
         return current;
       }
 
-      localStorage.setItem(
+      if (!db.isTutorial) localStorage.setItem(
         DAILY_FILTER_STORAGE_KEY,
         JSON.stringify(next)
       );
@@ -333,7 +334,7 @@ export default function PrayerList({
     return (
       <li key={prayer.id} className="bg-gray-800 rounded-lg p-3 shadow">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="w-full min-w-0 flex-1">
+          <div data-tour={isSecurity ? 'security-prayer' : undefined} className="w-full min-w-0 flex-1">
             <Heading className="text-white font-semibold">
               {prayer.name}
             </Heading>
@@ -348,6 +349,7 @@ export default function PrayerList({
 
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
             <button
+              data-tour="prayer-details"
               type="button"
               onClick={() => togglePrayerDetails(prayer.id)}
               className="text-sm px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
@@ -358,6 +360,7 @@ export default function PrayerList({
             </button>
             {isFocusEligible && typeof onFocusPrayer === 'function' && (
               <button
+                data-tour="prayer-focus"
                 type="button"
                 onClick={() => onFocusPrayer(prayer.id)}
                 className="text-sm px-2 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"
@@ -368,6 +371,7 @@ export default function PrayerList({
             )}
             {isSecurity && (
               <button
+                disabled={db.isTutorial}
                 type="button"
                 onClick={() => setQrSharePrayer(prayer)}
                 className="text-sm px-2 py-1 rounded bg-purple-600 hover:bg-purple-700 text-white"
@@ -435,6 +439,7 @@ export default function PrayerList({
 
         {isSecurity && (
           <button
+            disabled={db.isTutorial}
             type="button"
             onClick={() => setShowQrScanner(true)}
             className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-purple-700"
@@ -476,7 +481,7 @@ export default function PrayerList({
 
       {loading && <p className="text-gray-400">Loading…</p>}
 
-      <GroupPrayerList isSecurity={isSecurity} filters={dailyStatusFilters} />
+      {!db.isTutorial && <GroupPrayerList isSecurity={isSecurity} filters={dailyStatusFilters} />}
 
       {!loading && visiblePrayers.length === 0 && (
         <p className="text-gray-400">
@@ -542,6 +547,7 @@ export default function PrayerList({
 
       {!showAddForm && (
         <button
+          data-tour="prayer-add"
           type="button"
           onClick={() => setShowAddForm(true)}
           className="fixed bottom-20 right-5 z-40 w-14 h-14 rounded-full bg-yellow-500 text-black shadow-lg hover:bg-yellow-600 flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-yellow-300"

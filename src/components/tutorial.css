@@ -1,0 +1,35 @@
+.tutorial-workspace { padding-bottom: 65vh; }
+.tutorial-practice-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #544622; color: #fde68a; background: #282617; font-size: .8rem; }
+.tutorial-practice-label span { color: #d1d5db; }
+.tutorial-overlay { position: fixed; inset: 0; z-index: 2147483000; pointer-events: none; color: #f9fafb; }
+.tutorial-shade { position: fixed; background: #030712d9; pointer-events: auto; touch-action: none; }
+.tutorial-ring { position: fixed; border-radius: 10px; border: 2px solid #facc15; box-shadow: 0 0 0 3px #facc1530, 0 0 28px #facc1522; }
+.tutorial-inspect { position: fixed; pointer-events: auto; background: transparent; border-radius: 10px; }
+.tutorial-inspect:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.tutorial-coach { position: fixed; box-sizing: border-box; padding: 20px; border: 1px solid #78612a; border-radius: 16px; background: linear-gradient(145deg, #273244, #17202f); box-shadow: 0 18px 65px #0009; pointer-events: auto; overflow-y: auto; overscroll-behavior: contain; }
+.tutorial-coach-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tutorial-coach-top > span { color: #f6d36b; font-size: .63rem; letter-spacing: .15em; }
+.tutorial-coach button { min-height: 40px; border-radius: 7px; padding: 6px 10px; font-size: .8rem; }
+.tutorial-coach button:focus-visible { outline: 2px solid #fde68a; outline-offset: 2px; }
+.tutorial-coach-top button { color: #e5e7eb; text-decoration: underline; }
+.tutorial-progress { height: 3px; background: #ffffff12; border-radius: 3px; margin-block: 10px 18px; }
+.tutorial-progress span { display: block; height: 100%; background: #facc15; border-radius: inherit; }
+.tutorial-coach h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 1.65rem; line-height: 1.2; color: #fff; margin-bottom: 12px; }
+.tutorial-coach p { font-size: .9rem; line-height: 1.6; color: #e5e7eb; }
+.tutorial-coach-footer { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+.tutorial-coach-footer > button:first-child { background: #ffffff10; }
+.tutorial-coach-footer button:disabled { opacity: .4; }
+.tutorial-coach-footer > span { font-size: .72rem; color: #d1d5db; }
+.tutorial-coach-footer .tutorial-hint { max-width: 48%; color: #fde68a; text-align: right; }
+.tutorial-coach .tutorial-primary { background: #facc15; color: #171717; font-weight: 600; }
+.tutorial-coach .tutorial-text-action { margin-top: 12px; text-decoration: underline; color: #fde68a; }
+.tutorial-recovery { color: #fde68a; font-size: .82rem; margin-top: 12px; }
+.tutorial-recovery button { text-decoration: underline; }
+.tutorial-coach-form { padding: 14px; }
+.tutorial-coach-form .tutorial-progress { margin-block: 4px 10px; }
+.tutorial-coach-form h2 { font-size: 1.3rem; margin-bottom: 8px; }
+.tutorial-coach-form p { font-size: .82rem; line-height: 1.45; }
+.tutorial-coach-form .tutorial-coach-footer { margin-top: 8px; }
+.tutorial-workspace input, .tutorial-workspace select, .tutorial-workspace textarea { scroll-margin-top: 260px; }
+@media (max-height: 520px) { .tutorial-coach { padding: 12px; } .tutorial-coach h2 { font-size: 1.2rem; } .tutorial-coach p { font-size: .8rem; line-height: 1.4; } .tutorial-coach-top > span, .tutorial-progress { display: none; } .tutorial-coach-footer { margin-top: 8px; } }
+@media (prefers-reduced-motion: no-preference) { .tutorial-coach { animation: tutorial-arrive .18s ease-out; } @keyframes tutorial-arrive { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } } }

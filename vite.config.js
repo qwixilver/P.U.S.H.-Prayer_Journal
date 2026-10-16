@@ -21,13 +21,14 @@ export default defineConfig(() => {
         scope: base,
         base,
         workbox: {
+          importScripts: [`${base}notification-events.js`],
           globPatterns: ['**/*.{js,css,html,ico,png,svg}', 'guides/**/*'],
           navigateFallback: `${base}index.html`,
           navigateFallbackDenylist: [/^\/guides(?:\/|$)/],
         },
         manifest: {
-          name: 'Prayer Journal',
-          short_name: 'Journal',
+          name: 'Closet Prayer',
+          short_name: 'Closet Prayer',
           lang: 'en',
           display: 'standalone',
           background_color: '#1A202C',

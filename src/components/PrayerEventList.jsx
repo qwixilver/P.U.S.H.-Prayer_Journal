@@ -2,7 +2,8 @@
 // Read-only timeline of events for a prayer, with portable export and optional delete.
 
 import React, { useEffect, useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 import DataExportButton from './DataExportButton';
 
 function fmt(dateTime) {
@@ -19,6 +20,7 @@ export default function PrayerEventList({
   allowDelete = true,
   compact = false,
 }) {
+  const db = useJournalDatabase();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 

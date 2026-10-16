@@ -6,6 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { emitDbChanged, db } from '../db';
 import PrayerGroupsCard from './PrayerGroupsCard';
+import { notificationOptions } from '../utils/notificationPresentation';
 import {
   exportSmartJson,
   downloadJson,
@@ -315,13 +316,10 @@ export default function Settings() {
       if ('serviceWorker' in navigator) {
         const registration = await navigator.serviceWorker.ready;
         await registration.showNotification('Closet Prayer — Test', {
-          body: 'This is a test notification.',
-          tag: 'cp:test',
+          ...notificationOptions({ body: 'This is a test notification.', hash: '#settings', tag: 'cp:test' }),
         });
       } else {
-        new Notification('Closet Prayer — Test', {
-          body: 'This is a test notification.',
-        });
+        new Notification('Closet Prayer — Test', notificationOptions({ body: 'This is a test notification.', hash: '#settings', tag: 'cp:test' }));
       }
 
       setNotificationPermission(Notification.permission);
@@ -1380,6 +1378,7 @@ export default function Settings() {
             Reminders are configured locally. Browser and operating-system power
             controls can affect exact delivery on some devices.
           </p>
+          <p className="mt-2">Reminders use the app icon and a prayer badge where supported. Installing Closet Prayer from this browser can give it its own notification identity on supported devices. Your browser and operating system control grouping and may still label reminders as browser notifications.</p>
           <p className="mt-1">
             Permission:{' '}
             <span className="font-medium">{notificationPermission}</span>

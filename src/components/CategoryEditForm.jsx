@@ -3,9 +3,10 @@
 // The showSingle field remains unchanged internally but is labeled as Focus.
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function CategoryEditForm({ categoryId, onCancel, onSuccess }) {
+  const db = useJournalDatabase();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [name, setName] = useState('');

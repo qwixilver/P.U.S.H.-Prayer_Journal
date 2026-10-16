@@ -3,11 +3,12 @@
 // Editing does not modify the prayer's event timeline.
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 import PrayerUpsertModal from './PrayerUpsertModal';
 import PrayerEventList from './PrayerEventList';
 import PrayerEventForm from './PrayerEventForm';
 import DataExportButton from './DataExportButton';
+import { focusPrayers } from '../utils/focusPrayers';
 
 function fmt(iso) {
   if (!iso) return '';
@@ -23,28 +24,13 @@ function randomPrayer(prayers) {
   return prayers[Math.floor(Math.random() * prayers.length)];
 }
 
-function getPrayerStatus(prayer) {
-  const normalizedStatus = String(prayer?.status ?? '')
-    .trim()
-    .toLowerCase();
-
-  if (normalizedStatus === 'answered') return 'answered';
-  if (normalizedStatus === 'requested') return 'requested';
-
-  // Legacy fallback only: explicit status always wins when present.
-  return prayer?.answeredAt ? 'answered' : 'requested';
-}
-
-function isActivePrayer(prayer) {
-  return getPrayerStatus(prayer) === 'requested';
-}
-
 export default function SingleView({ initialPrayerId = null }) {
+  const db = useJournalDatabase();
   const [eligible, setEligible] = useState([]);
   const [current, setCurrent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
-  const [addEventOpen, setAddEventOpen] = useState(false);
+  const [addEventOpen, setAddEventOpen] = useState(db.isTutorial && db.tutorialStage === 'event-form');
 
   const loadEligible = useCallback(async ({ preferInitial = false } = {}) => {
     setLoading(true);
@@ -56,25 +42,7 @@ export default function SingleView({ initialPrayerId = null }) {
         db.prayers.toArray(),
       ]);
 
-      const eligibleCategoryIds = new Set(
-        categories
-          .filter((category) => Boolean(category.showSingle))
-          .map((category) => category.id)
-      );
-      const eligibleRequestorIds = new Set(
-        requestors
-          .filter(
-            (requestor) =>
-              !Boolean(requestor.archived) &&
-              eligibleCategoryIds.has(requestor.categoryId)
-          )
-          .map((requestor) => requestor.id)
-      );
-      const eligiblePrayers = prayers.filter(
-        (prayer) =>
-          eligibleRequestorIds.has(prayer.requestorId) &&
-          isActivePrayer(prayer)
-      );
+      const eligiblePrayers = focusPrayers(categories, requestors, prayers);
 
       setEligible(eligiblePrayers);
       setCurrent((previous) => {
@@ -96,7 +64,7 @@ export default function SingleView({ initialPrayerId = null }) {
     } finally {
       setLoading(false);
     }
-  }, [initialPrayerId]);
+  }, [initialPrayerId, db]);
 
   useEffect(() => {
     loadEligible({ preferInitial: true });
@@ -136,6 +104,10 @@ export default function SingleView({ initialPrayerId = null }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="w-full min-w-0 sm:pr-2">
             <h3 className="text-xl font-semibold text-white">{current.name}</h3>
+            <dl data-tour="focus-context" className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-300">
+              <div><dt className="inline font-semibold">Requestor: </dt><dd className="inline break-words">{current.requestorName}</dd></div>
+              <div><dt className="inline font-semibold">Category: </dt><dd className="inline break-words">{current.categoryName}</dd></div>
+            </dl>
             <div className="text-gray-300 text-sm">
               Requested: {fmt(current.requestedAt)} • Status: Requested
             </div>
@@ -166,6 +138,7 @@ export default function SingleView({ initialPrayerId = null }) {
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-white font-semibold">Events</h4>
               <button
+                data-tour="focus-event"
                 type="button"
                 onClick={() => setAddEventOpen((open) => !open)}
                 className="text-sm px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white"
@@ -188,6 +161,7 @@ export default function SingleView({ initialPrayerId = null }) {
 
         <div className="mt-3 border-t border-gray-700 pt-3 flex-shrink-0">
           <button
+            data-tour="focus-next"
             type="button"
             onClick={nextRandom}
             className="px-3 py-1 rounded bg-yellow-500 hover:bg-yellow-600 text-black"

@@ -18,9 +18,11 @@
 // - For EDIT, we pre-populate categoryId by looking up the prayer's requestor's category.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { db, emitDbChanged } from '../db';
+import { emitDbChanged } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 
 export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
+  const db = useJournalDatabase();
   const isEdit = Boolean(initialPrayer?.id);
 
   // Data sources
@@ -28,13 +30,13 @@ export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
   const [allRequestors, setAllRequestors] = useState([]);
 
   // Form state
-  const [categoryId, setCategoryId] = useState(null);
+  const [categoryId, setCategoryId] = useState(db.isTutorial && !isEdit ? 1 : null);
   const [requestorId, setRequestorId] = useState(null);
   const [name, setName] = useState(
-    isEdit ? initialPrayer.name || '' : ''
+    isEdit ? initialPrayer.name || '' : db.isTutorial ? 'A peaceful recovery' : ''
   );
   const [description, setDescription] = useState(
-    isEdit ? initialPrayer.description || '' : ''
+    isEdit ? initialPrayer.description || '' : db.isTutorial ? 'Please pray for strength and rest as Alex recovers.' : ''
   );
   const [requestedAt, setRequestedAt] = useState(
     isEdit
@@ -70,6 +72,7 @@ export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
 
       setCategories(cats);
       setAllRequestors(activeRequestors);
+      if (db.isTutorial && !isEdit) setRequestorId(1);
 
       // If editing, derive initial category from the prayer's active requestor.
       if (isEdit && initialPrayer.requestorId) {
@@ -168,7 +171,7 @@ export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 bg-gray-700 rounded-lg">
+    <form data-tour="prayer-form" onSubmit={handleSubmit} className="p-4 bg-gray-700 rounded-lg">
       <h4 className="text-white font-semibold mb-3">
         {isEdit ? 'Edit Prayer' : 'Add Prayer'}
       </h4>
@@ -297,7 +300,7 @@ export default function PrayerForm({ initialPrayer, onSuccess, onCancel }) {
           {busy ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Prayer'}
         </button>
 
-        {onCancel && (
+        {onCancel && !db.isTutorial && (
           <button
             type="button"
             onClick={onCancel}

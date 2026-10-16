@@ -3,7 +3,7 @@
 // requestor management, a sticky add form, and db:changed refresh support.
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../db';
+import { useJournalDatabase } from '../utils/JournalDatabaseContext';
 import CategoryForm from './CategoryForm';
 import CategoryEditForm from './CategoryEditForm';
 import RequestorForm from './RequestorForm';
@@ -21,9 +21,10 @@ function loadShowArchived() {
 }
 
 function CategoryList() {
+  const db = useJournalDatabase();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState({});
+  const [expanded, setExpanded] = useState(db.isTutorial && db.tutorialStage === 'requestor' ? { 1: true } : {});
   const [requestors, setRequestors] = useState({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState({});
@@ -79,6 +80,7 @@ function CategoryList() {
 
   useEffect(() => {
     loadCategories();
+    if (db.isTutorial && db.tutorialStage === 'requestor') loadRequestors(1);
   }, []);
 
   useEffect(() => {
@@ -97,7 +99,7 @@ function CategoryList() {
     setShowArchived(enabled);
 
     try {
-      localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, enabled ? '1' : '0');
+      if (!db.isTutorial) localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, enabled ? '1' : '0');
     } catch {
       // The toggle still works for this session if storage is unavailable.
     }
@@ -236,6 +238,7 @@ function CategoryList() {
 
                   <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
                     <button
+                      data-tour="category-expand"
                       type="button"
                       onClick={() => toggleCategory(category.id)}
                       className="px-2 py-1 text-sm rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
@@ -311,7 +314,7 @@ function CategoryList() {
                                 />
                               ) : (
                                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                  <div className="w-full min-w-0 flex-1">
+                                  <div data-tour="requestor-info" className="w-full min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <p className="text-white font-medium">
                                         {requestor.name}
